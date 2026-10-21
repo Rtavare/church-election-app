@@ -11,8 +11,18 @@
 // Anonymity: a ballot payload is { sessionCode, choices } only.
 // There is deliberately no voter field anywhere in this layer.
 
+export type SessionPhase = 'names' | 'voting' | 'results' | 'done'
+export interface SimpleDept {
+  id: string
+  name: string
+  candidates: { id: string; name: string }[] // number = order added (index + 1)
+  suggestions: string[] // names submitted from phones, waiting for pastor/secretary to add
+}
+/** Kahoot-style simple session: one department at a time. */
 export interface SessionBallotDef {
-  offices: { id: string; department: string; role: string; nominees: { id: string; name: string; number?: number }[] }[]
+  departments: SimpleDept[]
+  current: number // index of the department on screen
+  phase: SessionPhase
 }
 export interface VoteSession {
   code: string
@@ -72,6 +82,27 @@ export async function getSession(code: string): Promise<VoteSession | null> {
     return rows?.[0] ?? null
   }
   return readLS<Record<string, VoteSession>>(LS_SESSIONS, {})[code] ?? null
+}
+
+export async function updateSession(session: VoteSession): Promise<void> {
+  if (isLiveBackend) {
+    await sb(`vote_sessions?code=eq.${encodeURIComponent(session.code)}`, { method: 'PATCH',
+      body: JSON.stringify({ ballot: session.ballot, open: session.open, lang: session.lang }) })
+    return
+  }
+  const all = readLS<Record<string, VoteSession>>(LS_SESSIONS, {})
+  all[session.code] = session
+  writeLS(LS_SESSIONS, all)
+}
+
+/** A voter submits a name from their phone; pastor/secretary decides whether to add it. */
+export async function submitSuggestion(code: string, name: string): Promise<void> {
+  const session = await getSession(code)
+  if (!session) return
+  const dept = session.ballot.departments[session.ballot.current]
+  if (!dept || session.ballot.phase !== 'names') return
+  dept.suggestions = [...(dept.suggestions || []), name]
+  await updateSession(session)
 }
 
 export async function setSessionOpen(code: string, open: boolean): Promise<void> {
