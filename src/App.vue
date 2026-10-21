@@ -2,7 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import { DEPARTMENTS } from './data/departments'
-import { createSession, dashboardEntryUrl, dashboardUrl, deleteSession, fetchBallots, moveBallots, normalizeName, getSession, isLiveBackend, joinUrl, newSessionCode, updateSession, type RemoteBallot, type SimpleDept, type VoteSession } from './services/voteBackend'
+import { createSession, dashboardEntryUrl, dashboardUrl, deleteSession, fetchBallots, getSessionById, hostPinMatches, moveBallots, normalizeName, getSession, isLiveBackend, joinUrl, newSessionCode, updateSession, type RemoteBallot, type SimpleDept, type VoteSession } from './services/voteBackend'
 import type { Lang } from './types'
 
 // ——— Kahoot-style simple flow ———
@@ -56,6 +56,8 @@ function addCustomDept() {
 function removeSetupDept(i: number) { setupDepts.splice(i, 1) }
 
 const pin = ref('')
+const hostPin = ref('')
+const hostPinValid = computed(() => validPin(hostPin.value) && hostPin.value !== pin.value)
 const pinError = ref('')
 const validPin = (v: string) => /^\d{6}$/.test(v.trim())
 async function startSession() {
@@ -68,7 +70,7 @@ async function startSession() {
   const s: VoteSession = {
     code, title: title.value.trim() || L('Church Election', 'Elección de la Iglesia'), church: church.value.trim(),
     lang: lang.value, open: true, createdAt: new Date().toISOString(),
-    ballot: { departments: setupDepts.map(d => ({ id: crypto.randomUUID(), name: d.name, candidates: [], suggestions: [] })), current: 0, phase: 'names', allowSuggestions: true, sessionId: crypto.randomUUID() },
+    ballot: { departments: setupDepts.map(d => ({ id: crypto.randomUUID(), name: d.name, candidates: [], suggestions: [] })), current: 0, phase: 'names', allowSuggestions: true, sessionId: crypto.randomUUID(), hostPin: hostPin.value },
   }
   await createSession(s)
   session.value = s
@@ -143,7 +145,22 @@ async function approveResults() {
   }
   await sync()
 }
-const dashUrl = computed(() => (session.value ? dashboardUrl(session.value.code, sessionId.value) : '#'))
+const hostPinOf = computed(() => session.value?.ballot.hostPin || session.value?.code || '')
+const dashUrl = computed(() => (session.value ? dashboardUrl(sessionId.value, hostPinOf.value) : '#'))
+const copiedCreds = ref(false)
+async function copyHostCredentials() {
+  if (!session.value) return
+  const text = [
+    `${L('Church Election — HOST credentials (pastor/president only, do NOT share with the committee)', 'Elección de la Iglesia — Credenciales del ANFITRIÓN (solo pastor/presidente, NO compartir con el comité)')}`,
+    `${L('Session', 'Sesión')}: ${session.value.title}`,
+    `${L('Session ID', 'ID de sesión')}: ${sessionId.value}`,
+    `${L('Host PIN', 'PIN del anfitrión')}: ${hostPinOf.value}`,
+    `${L('Dashboard', 'Tablero')}: ${dashboardEntryUrl()}`,
+    `${L('Restore or view: enter the Session ID + Host PIN.', 'Para restaurar o ver: ingrese el ID de sesión + PIN del anfitrión.')}`,
+  ].join('\n')
+  await navigator.clipboard.writeText(text).catch(() => {})
+  copiedCreds.value = true; setTimeout(() => (copiedCreds.value = false), 2000)
+}
 const isLast = computed(() => !!session.value && session.value.ballot.current >= totalDepts.value - 1)
 async function nextDept() {
   if (!session.value) return
@@ -173,6 +190,19 @@ async function copySummary() {
   await navigator.clipboard.writeText(lines.join('\n')).catch(() => {})
   copied.value = true; setTimeout(() => (copied.value = false), 2000)
 }
+const newHostPin = ref('')
+const hostPinMsg = ref('')
+async function changeHostPin() {
+  if (!session.value) return
+  hostPinMsg.value = ''
+  const v = newHostPin.value.trim()
+  if (!validPin(v)) { hostPinMsg.value = L('Host PIN must be exactly 6 digits.', 'El PIN del anfitrión debe tener exactamente 6 dígitos.'); return }
+  if (v === session.value.code) { hostPinMsg.value = L('Host PIN must be different from the voting PIN.', 'El PIN del anfitrión debe ser distinto al PIN de votación.'); return }
+  session.value.ballot.hostPin = v
+  await sync()
+  newHostPin.value = ''
+  hostPinMsg.value = L('Host PIN changed.', 'PIN del anfitrión cambiado.')
+}
 const newPin = ref('')
 const pinMsg = ref('')
 async function changePin() {
@@ -200,12 +230,12 @@ const restoreId = ref('')
 const restoreError = ref('')
 async function restoreSession() {
   restoreError.value = ''
-  const code = restorePin.value.trim()
-  if (!validPin(code)) { restoreError.value = L('Enter the 6-digit PIN.', 'Ingrese el PIN de 6 dígitos.'); return }
-  const s = await getSession(code).catch(() => null)
-  if (!s) { restoreError.value = L('No session found for that PIN.', 'No se encontró ninguna sesión con ese PIN.'); return }
-  if (s.ballot.sessionId && restoreId.value.trim().toLowerCase() !== s.ballot.sessionId.toLowerCase()) {
-    restoreError.value = L('That Session ID does not match this PIN.', 'Ese ID de sesión no coincide con este PIN.'); return
+  const hp = restorePin.value.trim()
+  if (!validPin(hp)) { restoreError.value = L('Enter the 6-digit host PIN.', 'Ingrese el PIN del anfitrión de 6 dígitos.'); return }
+  const s = await getSessionById(restoreId.value).catch(() => null)
+  if (!s) { restoreError.value = L('No session found with that Session ID.', 'No se encontró ninguna sesión con ese ID de sesión.'); return }
+  if (!hostPinMatches(s, hp)) {
+    restoreError.value = L('That host PIN does not match this session. (The committee voting PIN does not restore a session.)', 'Ese PIN de anfitrión no coincide con esta sesión. (El PIN de votación del comité no restaura una sesión.)'); return
   }
   if (!s.ballot.sessionId) { s.ballot.sessionId = crypto.randomUUID(); await updateSession(s).catch(() => {}) }
   session.value = s
@@ -267,14 +297,19 @@ watch(lang, () => persist())
       <label>{{ L('PIN', 'PIN') }}<input v-model="pin" inputmode="numeric" maxlength="6" class="pininput" :placeholder="L('Pastor sets 6 digits', 'El pastor define 6 dígitos')" /></label>
       <button @click="pin = newSessionCode()">🎲 {{ L('Generate one for me', 'Generar uno para mí') }}</button>
       <p v-if="pinError" class="error">{{ pinError }}</p>
-      <button class="primary big" :disabled="!setupDepts.length || !validPin(pin)" @click="startSession">{{ L('Start session', 'Iniciar sesión') }} →</button>
-      <p v-if="setupDepts.length && !validPin(pin)" class="sub">{{ L('Set a 6-digit PIN above to start.', 'Defina un PIN de 6 dígitos arriba para comenzar.') }}</p>
+      <h3>{{ L('Host PIN — pastor / president only (6 digits)', 'PIN del anfitrión — solo pastor / presidente (6 dígitos)') }}</h3>
+      <p class="sub">{{ L('A DIFFERENT PIN from the voting PIN above. Paired with the Session ID, it restores this session and opens the dashboard. The committee never sees it — they only get the voting PIN on the QR.', 'Un PIN DIFERENTE al PIN de votación de arriba. Junto con el ID de sesión, restaura esta sesión y abre el tablero. El comité nunca lo ve — ellos solo reciben el PIN de votación del QR.') }}</p>
+      <label>{{ L('Host PIN', 'PIN del anfitrión') }}<input v-model="hostPin" inputmode="numeric" maxlength="6" class="pininput" :placeholder="L('Different from voting PIN', 'Distinto al PIN de votación')" /></label>
+      <button @click="hostPin = newSessionCode()">🎲 {{ L('Generate one for me', 'Generar uno para mí') }}</button>
+      <p v-if="validPin(hostPin) && hostPin === pin" class="error">{{ L('Host PIN must be different from the voting PIN.', 'El PIN del anfitrión debe ser distinto al PIN de votación.') }}</p>
+      <button class="primary big" :disabled="!setupDepts.length || !validPin(pin) || !hostPinValid" @click="startSession">{{ L('Start session', 'Iniciar sesión') }} →</button>
+      <p v-if="setupDepts.length && (!validPin(pin) || !hostPinValid)" class="sub">{{ L('Set the voting PIN and a different host PIN above to start.', 'Defina el PIN de votación y un PIN de anfitrión distinto arriba para comenzar.') }}</p>
       <p class="sub">{{ L('Simple, Kahoot-style: one department at a time, on the big screen.', 'Simple, estilo Kahoot: un departamento a la vez, en la pantalla grande.') }}</p>
       <div class="restorebox">
         <h3>{{ L('Restore a session', 'Restaurar una sesión') }}</h3>
-        <p class="sub">{{ L('Started on another device, or this one restarted? Enter the PIN + Session ID and pick the session back up as host, exactly where it left off. Treat both like a password — together they give host control.', '¿Comenzó en otro dispositivo, o este se reinició? Ingrese el PIN + ID de sesión y retome la sesión como anfitrión, justo donde quedó. Trate ambos como una contraseña — juntos dan control total.') }}</p>
+        <p class="sub">{{ L('Started on another device, or this one restarted? Enter the Session ID + HOST PIN (not the committee voting PIN) and pick the session back up as host, exactly where it left off.', '¿Comenzó en otro dispositivo, o este se reinició? Ingrese el ID de sesión + PIN DEL ANFITRIÓN (no el PIN de votación del comité) y retome la sesión como anfitrión, justo donde quedó.') }}</p>
         <label>{{ L('Session ID', 'ID de sesión') }}<input v-model="restoreId" :placeholder="L('Full session ID', 'ID de sesión completo')" /></label>
-        <label>{{ L('PIN', 'PIN') }}<input v-model="restorePin" inputmode="numeric" maxlength="6" class="pininput" @keyup.enter="restoreSession" /></label>
+        <label>{{ L('Host PIN', 'PIN del anfitrión') }}<input v-model="restorePin" inputmode="numeric" maxlength="6" class="pininput" @keyup.enter="restoreSession" /></label>
         <button class="primary" @click="restoreSession">{{ L('Restore session', 'Restaurar sesión') }}</button>
         <p v-if="restoreError" class="error">{{ restoreError }}</p>
       </div>
@@ -285,7 +320,7 @@ watch(lang, () => persist())
     <template v-else-if="session && !isDone && dept">
       <section class="card stagehead">
         <p class="kicker">{{ session.title }} · {{ L('Department', 'Departamento') }} {{ session.ballot.current + 1 }} {{ L('of', 'de') }} {{ totalDepts }}</p>
-        <p class="sub">{{ L('Session ID', 'ID de sesión') }}: <strong>{{ sessionIdShort }}</strong> · PIN: <strong>{{ session.code }}</strong></p>
+        <p class="sub">{{ L('Session ID', 'ID de sesión') }}: <strong>{{ sessionIdShort }}</strong> · {{ L('Voting PIN (committee)', 'PIN de votación (comité)') }}: <strong>{{ session.code }}</strong></p>
         <h2 class="deptname">{{ dept.name }}</h2>
         <p>
           <span class="badge" :class="{ open: phase === 'voting' }">{{ phase === 'names' ? L('Collecting names', 'Recibiendo nombres') : phase === 'voting' ? L('VOTING OPEN', 'VOTACIÓN ABIERTA') : L('Results', 'Resultados') }}</span>
@@ -374,6 +409,14 @@ watch(lang, () => persist())
             <h4>{{ L('Live board dashboard', 'Tablero en vivo') }}</h4>
             <p class="sub">{{ L('Mind-map of the church, its departments, and the approved elected officials. Viewable with the Session ID + PIN.', 'Mapa mental de la iglesia, sus departamentos y los oficiales electos aprobados. Visible con el ID de sesión + PIN.') }}</p>
             <p>{{ L('Session ID', 'ID de sesión') }}: <strong>{{ sessionId }}</strong></p>
+            <p>{{ L('Host PIN', 'PIN del anfitrión') }}: <strong>{{ hostPinOf }}</strong> <span class="sub">({{ L('pastor/president only — not the voting PIN', 'solo pastor/presidente — no es el PIN de votación') }})</span></p>
+            <button class="primary" @click="copyHostCredentials">{{ copiedCreds ? L('Copied ✓', 'Copiado ✓') : L('Copy Session ID + Host PIN', 'Copiar ID de sesión + PIN del anfitrión') }}</button>
+            <div class="changepin">
+              <h4>{{ L('Change host PIN', 'Cambiar PIN del anfitrión') }}</h4>
+              <input v-model="newHostPin" inputmode="numeric" maxlength="6" :placeholder="L('New host PIN', 'Nuevo PIN del anfitrión')" class="pininput" />
+              <button @click="changeHostPin">{{ L('Change host PIN', 'Cambiar PIN del anfitrión') }}</button>
+              <p v-if="hostPinMsg" class="sub">{{ hostPinMsg }}</p>
+            </div>
             <a class="btnlink" :href="dashUrl" target="_blank" rel="noopener">{{ L('Open live dashboard', 'Abrir tablero en vivo') }}</a>
             <a class="btnlink" :href="dashboardEntryUrl()" target="_blank" rel="noopener">{{ L('Dashboard sign-in page (ID + PIN)', 'Página de acceso al tablero (ID + PIN)') }}</a>
           </div>
