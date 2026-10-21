@@ -1,3 +1,17 @@
+/** Role presets inside a department — assign a candidate to each. */
+export interface RolePreset { id: string; en: string; es: string }
+export const ROLES: RolePreset[] = [
+  { id: 'director', en: 'Director', es: 'Director/a' },
+  { id: 'sub-director', en: 'Sub-Director', es: 'Subdirector/a' },
+  { id: 'associate', en: 'Associate Director', es: 'Director/a Asociado/a' },
+  { id: 'secretary', en: 'Secretary', es: 'Secretario/a' },
+  { id: 'treasurer', en: 'Treasurer', es: 'Tesorero/a' },
+  { id: 'coordinator', en: 'Coordinator', es: 'Coordinador/a' },
+  { id: 'leader', en: 'Leader', es: 'Líder' },
+  { id: 'member', en: 'Member', es: 'Miembro' },
+  { id: 'custom-role', en: 'Custom role…', es: 'Cargo personalizado…' },
+]
+
 // Standard SDA departments / offices from the Church Manual (2022, Ch. 8)
 // Each entry is bilingual so the dropdown follows the EN/ES toggle.
 export interface DepartmentPreset {
