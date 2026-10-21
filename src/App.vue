@@ -2,7 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import { DEPARTMENTS } from './data/departments'
-import { createSession, fetchBallots, getSession, isLiveBackend, joinUrl, newSessionCode, updateSession, type RemoteBallot, type SimpleDept, type VoteSession } from './services/voteBackend'
+import { createSession, deleteSession, fetchBallots, moveBallots, getSession, isLiveBackend, joinUrl, newSessionCode, updateSession, type RemoteBallot, type SimpleDept, type VoteSession } from './services/voteBackend'
 import type { Lang } from './types'
 
 // ——— Kahoot-style simple flow ———
@@ -26,6 +26,7 @@ const qrDataUrl = ref('')
 const nameDraft = ref('')
 let poll: number | undefined
 
+const qrJoinUrl = () => (session.value ? joinUrl(session.value.code) : '#')
 const dept = computed<SimpleDept | null>(() => session.value?.ballot.departments[session.value.ballot.current] || null)
 const phase = computed(() => session.value?.ballot.phase || 'names')
 const isDone = computed(() => (phase.value as string) === 'done')
@@ -46,9 +47,16 @@ function addSetupDept() {
 }
 function removeSetupDept(i: number) { setupDepts.splice(i, 1) }
 
+const pin = ref(newSessionCode())
+const pinError = ref('')
+const validPin = (v: string) => /^\d{6}$/.test(v.trim())
 async function startSession() {
   if (!setupDepts.length) return
-  const code = newSessionCode()
+  pinError.value = ''
+  const code = pin.value.trim()
+  if (!validPin(code)) { pinError.value = L('PIN must be exactly 6 digits.', 'El PIN debe tener exactamente 6 dígitos.'); return }
+  const existing = await getSession(code).catch(() => null)
+  if (existing && existing.ballot.phase !== 'done') { pinError.value = L('That PIN is already in use — pick another.', 'Ese PIN ya está en uso — elija otro.'); return }
   const s: VoteSession = {
     code, title: title.value.trim() || L('Church Election', 'Elección de la Iglesia'), church: church.value.trim(),
     lang: lang.value, open: true, createdAt: new Date().toISOString(),
@@ -133,6 +141,28 @@ async function copySummary() {
   await navigator.clipboard.writeText(lines.join('\n')).catch(() => {})
   copied.value = true; setTimeout(() => (copied.value = false), 2000)
 }
+const newPin = ref('')
+const pinMsg = ref('')
+async function changePin() {
+  if (!session.value) return
+  pinMsg.value = ''
+  const code = newPin.value.trim()
+  if (!validPin(code)) { pinMsg.value = L('New PIN must be exactly 6 digits.', 'El nuevo PIN debe tener exactamente 6 dígitos.'); return }
+  if (code === session.value.code) { pinMsg.value = L('That is the current PIN.', 'Ese es el PIN actual.'); return }
+  const existing = await getSession(code).catch(() => null)
+  if (existing && existing.ballot.phase !== 'done') { pinMsg.value = L('That PIN is already in use — pick another.', 'Ese PIN ya está en uso — elija otro.'); return }
+  const oldCode = session.value.code
+  const moved: VoteSession = { ...session.value, code }
+  await createSession(moved)
+  await moveBallots(oldCode, code) // votes already cast follow the session to the new PIN
+  await deleteSession(oldCode) // old QR + old PIN stop working here
+  session.value = moved
+  qrDataUrl.value = await QRCode.toDataURL(joinUrl(code), { width: 300 })
+  ballots.value = await fetchBallots(code).catch(() => ballots.value)
+  newPin.value = ''
+  pinMsg.value = L('PIN changed. The old QR and PIN no longer work — voters must join with the new PIN.', 'PIN cambiado. El QR y PIN anteriores ya no funcionan — los votantes deben unirse con el nuevo PIN.')
+  persist()
+}
 async function endSession() {
   if (poll) clearInterval(poll)
   session.value = null; ballots.value = []; setupDepts.splice(0)
@@ -178,6 +208,11 @@ watch(lang, () => persist())
       <ol class="deptlist">
         <li v-for="(d, i) in setupDepts" :key="i"><strong>{{ d.name }}</strong> <button @click="removeSetupDept(i)">{{ L('Remove', 'Eliminar') }}</button></li>
       </ol>
+      <h3>{{ L('Session PIN (6 digits)', 'PIN de la sesión (6 dígitos)') }}</h3>
+      <p class="sub">{{ L('This PIN is the gate to the anonymous vote: only people with this PIN can join and vote. You can set your own, or use the one generated — and you can change it anytime during the session.', 'Este PIN es la puerta al voto anónimo: solo las personas con este PIN pueden unirse y votar. Puede poner el suyo, o usar el generado — y puede cambiarlo en cualquier momento durante la sesión.') }}</p>
+      <label>{{ L('PIN', 'PIN') }}<input v-model="pin" inputmode="numeric" maxlength="6" class="pininput" /></label>
+      <button @click="pin = newSessionCode()">🎲 {{ L('Generate a new PIN', 'Generar un PIN nuevo') }}</button>
+      <p v-if="pinError" class="error">{{ pinError }}</p>
       <button class="primary big" :disabled="!setupDepts.length" @click="startSession">{{ L('Start session', 'Iniciar sesión') }} →</button>
       <p class="sub">{{ L('Simple, Kahoot-style: one department at a time, on the big screen.', 'Simple, estilo Kahoot: un departamento a la vez, en la pantalla grande.') }}</p>
     </section>
@@ -260,6 +295,14 @@ watch(lang, () => persist())
           <p class="bigcode">{{ session.code }}</p>
           <p class="sub">{{ L('Scan the QR or enter the code on your phone. No app, no name — just vote by number.', 'Escanee el QR o ingrese el código en su teléfono. Sin app, sin nombre — solo vote por número.') }}</p>
           <button @click="refresh">{{ L('Refresh', 'Actualizar') }}</button>
+          <p><a :href="qrJoinUrl()" target="_blank" rel="noopener">{{ L('Preview the voter screen', 'Vista previa de la pantalla del votante') }}</a></p>
+          <div class="changepin">
+            <h4>{{ L('Change PIN', 'Cambiar PIN') }}</h4>
+            <p class="sub">{{ L('The old QR and PIN stop working immediately. Votes already cast stay counted.', 'El QR y el PIN anteriores dejan de funcionar de inmediato. Los votos ya emitidos siguen contados.') }}</p>
+            <input v-model="newPin" inputmode="numeric" maxlength="6" :placeholder="L('New 6-digit PIN', 'Nuevo PIN de 6 dígitos')" class="pininput" />
+            <button class="primary" @click="changePin">{{ L('Change PIN', 'Cambiar PIN') }}</button>
+            <p v-if="pinMsg" class="sub">{{ pinMsg }}</p>
+          </div>
         </aside>
       </div>
     </template>
@@ -321,6 +364,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .rname { position: relative; line-height: 44px; padding-left: 12px; font-weight: 600; color: var(--navy); mix-blend-mode: normal; }
 .resultrow:nth-child(1) .bar { background: var(--gold); }
 .sub { opacity: .8; }
+.pininput { font-size: 1.3rem; font-weight: 800; letter-spacing: .35em; text-align: center; max-width: 220px; }
+.error { color: #8a1f1f; font-weight: 700; }
+.changepin { border-top: 2px solid var(--line); margin-top: 16px; padding-top: 12px; }
 .foot { text-align: center; color: var(--muted); font-size: .9rem; }
 .office { border-top: 2px solid var(--line); padding: 12px 0 4px; }
 </style>
