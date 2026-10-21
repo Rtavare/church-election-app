@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { fetchBallots, getSession, type RemoteBallot, type SimpleDept, type VoteSession } from '../services/voteBackend'
+import { fetchBallots, getSession, getSessionById, hostPinMatches, type RemoteBallot, type SimpleDept, type VoteSession } from '../services/voteBackend'
 
 // Live board dashboard — mind-map style hierarchy:
 // Church (center) → Departments → Elected officials (Director → Sub-Director).
 // Viewable only with the Session ID + the pastor's PIN. Officials appear
 // only after the committee vote for that department is submitted as approved.
-const props = defineProps<{ code?: string; sessionId?: string }>()
-const pinInput = ref(props.code || '')
+const props = defineProps<{ sessionId?: string; hostPin?: string }>()
+const pinInput = ref(props.hostPin || '')
 const idInput = ref(props.sessionId || '')
 const session = ref<VoteSession | null>(null)
 const ballots = ref<RemoteBallot[]>([])
@@ -18,13 +18,12 @@ let poll: number | undefined
 const es = computed(() => session.value?.lang === 'es')
 const t = (en: string, esTxt: string) => (es.value ? esTxt : en)
 
-async function tryOpen(code: string, id: string) {
+async function tryOpen(id: string, pin: string) {
   error.value = ''
-  const s = await getSession(code.trim()).catch(() => null)
-  if (!s) { error.value = 'Session not found for that PIN. Check the PIN and try again.'; return }
-  const realId = s.ballot.sessionId || ''
-  if (realId && id.trim().toLowerCase() !== realId.toLowerCase()) {
-    error.value = 'That Session ID does not match this PIN. Both must come from the same session.'
+  const s = await getSessionById(id).catch(() => null)
+  if (!s) { error.value = 'No session found with that Session ID. Check it and try again.'; return }
+  if (!hostPinMatches(s, pin.trim())) {
+    error.value = 'That host PIN does not match this session. The committee voting PIN does not open the dashboard.'
     return
   }
   session.value = s
@@ -37,7 +36,7 @@ async function tryOpen(code: string, id: string) {
     ballots.value = await fetchBallots(s.code).catch(() => ballots.value)
   }, 3000)
 }
-async function openFromForm() { await tryOpen(pinInput.value, idInput.value) }
+async function openFromForm() { await tryOpen(idInput.value, pinInput.value) }
 
 function statusOf(d: SimpleDept, idx: number) {
   if (d.approved) return 'approved'
@@ -49,7 +48,7 @@ function statusOf(d: SimpleDept, idx: number) {
 const votesFor = (d: SimpleDept) => ballots.value.filter(b => b.choices[d.id]).length
 const approvedCount = computed(() => session.value?.ballot.departments.filter(d => d.approved).length || 0)
 
-onMounted(() => { if (props.code && props.sessionId) tryOpen(props.code, props.sessionId) })
+onMounted(() => { if (props.sessionId && props.hostPin) tryOpen(props.sessionId, props.hostPin) })
 onUnmounted(() => { if (poll) clearInterval(poll) })
 </script>
 
@@ -58,9 +57,9 @@ onUnmounted(() => { if (poll) clearInterval(poll) })
     <!-- Sign-in gate: Session ID + PIN -->
     <section v-if="!unlocked" class="card gate">
       <h1>{{ t('Live Board Dashboard', 'Tablero en vivo') }}</h1>
-      <p class="sub">{{ t('Enter the Session ID and the PIN set by the pastor / committee president to view the live church board.', 'Ingrese el ID de sesión y el PIN definido por el pastor / presidente del comité para ver la junta en vivo.') }}</p>
+      <p class="sub">{{ t('Enter the Session ID and the HOST PIN set by the pastor / committee president. (The committee voting PIN does not open the dashboard.)', 'Ingrese el ID de sesión y el PIN DEL ANFITRIÓN definido por el pastor / presidente del comité. (El PIN de votación del comité no abre el tablero.)') }}</p>
       <label>{{ t('Session ID', 'ID de sesión') }}<input v-model="idInput" :placeholder="t('e.g. 3F9A… full ID from the host screen', 'ej. 3F9A… ID completo de la pantalla del anfitrión')" /></label>
-      <label>{{ t('PIN (6 digits)', 'PIN (6 dígitos)') }}<input v-model="pinInput" inputmode="numeric" maxlength="6" placeholder="••••••" @keyup.enter="openFromForm" /></label>
+      <label>{{ t('Host PIN (6 digits)', 'PIN del anfitrión (6 dígitos)') }}<input v-model="pinInput" inputmode="numeric" maxlength="6" placeholder="••••••" @keyup.enter="openFromForm" /></label>
       <button class="primary big" @click="openFromForm">{{ t('View dashboard', 'Ver tablero') }}</button>
       <p v-if="error" class="error">{{ error }}</p>
     </section>
