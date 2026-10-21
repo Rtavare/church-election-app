@@ -24,6 +24,7 @@ export interface SessionBallotDef {
   current: number // index of the department on screen
   phase: SessionPhase
   allowSuggestions?: boolean // president's switch: may the committee submit names from phones? (default true)
+  sessionId?: string // unique, permanent ID for this session (separate from the join PIN)
 }
 
 /** Name comparison for duplicate checks: ignores case, extra spaces and accents. */
