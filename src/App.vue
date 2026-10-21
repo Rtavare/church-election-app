@@ -215,6 +215,7 @@ watch(lang, () => persist())
       <p v-if="pinError" class="error">{{ pinError }}</p>
       <button class="primary big" :disabled="!setupDepts.length" @click="startSession">{{ L('Start session', 'Iniciar sesión') }} →</button>
       <p class="sub">{{ L('Simple, Kahoot-style: one department at a time, on the big screen.', 'Simple, estilo Kahoot: un departamento a la vez, en la pantalla grande.') }}</p>
+      <p v-if="!isLiveBackend" class="error">{{ L('Local demo mode: sessions live only on THIS device. Test the full flow here or in another tab of this browser — other phones will get \'Session not found\' until the shared database (live mode) is connected.', 'Modo demo local: las sesiones viven solo en ESTE dispositivo. Pruebe el flujo aquí o en otra pestaña de este navegador — otros teléfonos verán \'Sesión no encontrada\' hasta que se conecte la base de datos compartida (modo en vivo).') }}</p>
     </section>
 
     <!-- LIVE SESSION -->
