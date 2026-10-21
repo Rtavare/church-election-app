@@ -33,3 +33,7 @@ create policy "create session" on public.vote_sessions for insert with check (tr
 create policy "open close session" on public.vote_sessions for update using (true);
 create policy "submit ballot" on public.vote_ballots for insert with check (true);
 create policy "read ballots for tally" on public.vote_ballots for select using (true);
+
+create policy "delete session (PIN rotation)" on public.vote_sessions for delete using (true);
+
+create policy "reassign ballots (PIN rotation)" on public.vote_ballots for update using (true);
