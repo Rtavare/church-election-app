@@ -51,9 +51,24 @@ const es = () => session.value?.lang === 'es'
 </template>
 
 <style scoped>
-.wrap { max-width: 640px; margin: 0 auto; padding: 16px; font-family: system-ui, sans-serif; }
-label { display: block; margin: 8px 0; }
-fieldset { border: 1px solid #ddd; border-radius: 12px; margin: 10px 0; }
-button.primary { background: #14532d; color: #fff; border: 1px solid #14532d; padding: 10px 18px; border-radius: 999px; cursor: pointer; }
-.sub { opacity: .75; } .ok { background: #f0fdf4; padding: 12px; border-radius: 12px; }
+.wrap { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 {
+  background: linear-gradient(135deg, var(--navy), var(--navy-3)); color: #fff;
+  border-bottom: 4px solid var(--gold); border-radius: var(--radius);
+  padding: 18px 20px; box-shadow: var(--shadow); font-size: 1.5rem; margin: 0 0 14px;
+}
+label {
+  display: flex; align-items: center; gap: 10px; margin: 10px 0; min-height: 52px;
+  background: #fff; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px; font-weight: 500;
+}
+label:has(input:checked) { border-color: var(--gold); background: #fdf8e7; box-shadow: inset 0 0 0 1px var(--gold); }
+input[type='radio'] { width: 22px; height: 22px; accent-color: var(--navy); }
+fieldset { border: 1.5px solid var(--line); border-radius: var(--radius); margin: 12px 0; padding: 12px 16px; background: #fbfcfe; }
+legend { font-weight: 700; color: var(--navy); padding: 0 6px; }
+button.primary {
+  background: var(--navy); color: #fff; border: 1.5px solid var(--navy); padding: 12px 22px;
+  border-radius: 999px; cursor: pointer; font: inherit; font-weight: 700; min-height: 48px; width: 100%;
+}
+.sub { opacity: .8; }
+.ok { background: #fdf8e7; border: 1px solid var(--gold); padding: 14px; border-radius: var(--radius); font-weight: 600; }
 </style>
