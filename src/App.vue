@@ -2,7 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import { DEPARTMENTS } from './data/departments'
-import { createSession, deleteSession, fetchBallots, moveBallots, normalizeName, getSession, isLiveBackend, joinUrl, newSessionCode, updateSession, type RemoteBallot, type SimpleDept, type VoteSession } from './services/voteBackend'
+import { createSession, dashboardEntryUrl, dashboardUrl, deleteSession, fetchBallots, moveBallots, normalizeName, getSession, isLiveBackend, joinUrl, newSessionCode, updateSession, type RemoteBallot, type SimpleDept, type VoteSession } from './services/voteBackend'
 import type { Lang } from './types'
 
 // ——— Kahoot-style simple flow ———
@@ -127,6 +127,17 @@ const maxVotes = computed(() => Math.max(1, ...tally.value.map(t => t.votes)))
 async function startVoting() { await sync({ phase: 'voting' }) }
 async function showResults() { await sync({ phase: 'results' }) }
 async function backToNames() { await sync({ phase: 'names' }) }
+async function approveResults() {
+  if (!dept.value) return
+  const top = tally.value
+  dept.value.approved = {
+    director: top[0] ? { name: top[0].candidate.name, number: top[0].number, votes: top[0].votes } : undefined,
+    sub: top[1] ? { name: top[1].candidate.name, number: top[1].number, votes: top[1].votes } : undefined,
+    approvedAt: new Date().toISOString(),
+  }
+  await sync()
+}
+const dashUrl = computed(() => (session.value ? dashboardUrl(session.value.code, sessionId.value) : '#'))
 const isLast = computed(() => !!session.value && session.value.ballot.current >= totalDepts.value - 1)
 async function nextDept() {
   if (!session.value) return
@@ -143,10 +154,15 @@ async function copySummary() {
   if (!session.value) return
   const lines = [`${session.value.title} — ${session.value.church}`, `${L('Session ID', 'ID de sesión')}: ${sessionId.value}`, `${L('Date', 'Fecha')}: ${new Date(session.value.createdAt).toLocaleString()}`, '']
   for (const d of session.value.ballot.departments) {
-    const r = deptResult(d)
-    lines.push(`${d.name}:`)
-    lines.push(`  ${L('Director', 'Director/a')}: ${r.director ? `#${r.director.number} ${r.director.c.name} (${r.director.votes})` : '—'}`)
-    if (r.sub) lines.push(`  ${L('Sub-Director', 'Subdirector/a')}: #${r.sub.number} ${r.sub.c.name} (${r.sub.votes})`)
+    if (d.approved) {
+      lines.push(`${d.name}:`)
+      lines.push(`  ${L('Director', 'Director/a')}: ${d.approved.director ? `#${d.approved.director.number} ${d.approved.director.name} (${d.approved.director.votes})` : '—'}`)
+      if (d.approved.sub) lines.push(`  ${L('Sub-Director', 'Subdirector/a')}: #${d.approved.sub.number} ${d.approved.sub.name} (${d.approved.sub.votes})`)
+    } else {
+      const r = deptResult(d)
+      lines.push(`${d.name}: (${L('not approved', 'no aprobado')})`)
+      lines.push(`  ${L('Director', 'Director/a')}: ${r.director ? `#${r.director.number} ${r.director.c.name} (${r.director.votes})` : '—'}`)
+    }
   }
   await navigator.clipboard.writeText(lines.join('\n')).catch(() => {})
   copied.value = true; setTimeout(() => (copied.value = false), 2000)
@@ -303,9 +319,12 @@ watch(lang, () => persist())
               {{ L('Director', 'Director/a') }}: <strong>{{ tally[0]?.candidate.name }}</strong>
               <span v-if="tally[1]"> · {{ L('Sub-Director', 'Subdirector/a') }}: <strong>{{ tally[1].candidate.name }}</strong></span>
             </p>
+            <div v-if="dept.approved" class="approvedstamp">✓ {{ L('Submitted as approved — these officials are on the live dashboard.', 'Enviado como aprobado — estos oficiales están en el tablero en vivo.') }}</div>
             <div class="actions">
-              <button class="primary big" @click="nextDept">{{ isLast ? L('Finish — see summary', 'Terminar — ver resumen') : L('Next department', 'Siguiente departamento') }} →</button>
+              <button v-if="!dept.approved" class="primary big" @click="approveResults">{{ L('Submit as approved → add to dashboard', 'Enviar como aprobado → agregar al tablero') }}</button>
+              <button v-else class="primary big" @click="nextDept">{{ isLast ? L('Finish — see summary', 'Terminar — ver resumen') : L('Next department', 'Siguiente departamento') }} →</button>
             </div>
+            <p v-if="!dept.approved" class="sub">{{ L('Approving locks this department\'s result. Only approved officials appear on the dashboard.', 'Aprobar fija el resultado de este departamento. Solo los oficiales aprobados aparecen en el tablero.') }}</p>
           </template>
         </section>
 
@@ -316,6 +335,13 @@ watch(lang, () => persist())
           <p class="sub">{{ L('Scan the QR or enter the code on your phone. No app, no name — just vote by number.', 'Escanee el QR o ingrese el código en su teléfono. Sin app, sin nombre — solo vote por número.') }}</p>
           <button @click="refresh">{{ L('Refresh', 'Actualizar') }}</button>
           <p><a :href="qrJoinUrl()" target="_blank" rel="noopener">{{ L('Preview the voter screen', 'Vista previa de la pantalla del votante') }}</a></p>
+          <div class="dashbox">
+            <h4>{{ L('Live board dashboard', 'Tablero en vivo') }}</h4>
+            <p class="sub">{{ L('Mind-map of the church, its departments, and the approved elected officials. Viewable with the Session ID + PIN.', 'Mapa mental de la iglesia, sus departamentos y los oficiales electos aprobados. Visible con el ID de sesión + PIN.') }}</p>
+            <p>{{ L('Session ID', 'ID de sesión') }}: <strong>{{ sessionId }}</strong></p>
+            <a class="btnlink" :href="dashUrl" target="_blank" rel="noopener">{{ L('Open live dashboard', 'Abrir tablero en vivo') }}</a>
+            <a class="btnlink" :href="dashboardEntryUrl()" target="_blank" rel="noopener">{{ L('Dashboard sign-in page (ID + PIN)', 'Página de acceso al tablero (ID + PIN)') }}</a>
+          </div>
           <div class="changepin">
             <h4>{{ L('Change PIN', 'Cambiar PIN') }}</h4>
             <p class="sub">{{ L('The old QR and PIN stop working immediately. Votes already cast stay counted.', 'El QR y el PIN anteriores dejan de funcionar de inmediato. Los votos ya emitidos siguen contados.') }}</p>
@@ -333,8 +359,9 @@ watch(lang, () => persist())
       <p class="sub">{{ L('Session ID', 'ID de sesión') }}: <strong>{{ sessionId }}</strong></p>
       <article v-for="d in session?.ballot.departments" :key="d.id" class="office">
         <h4>{{ d.name }}</h4>
-        <p>{{ L('Director', 'Director/a') }}: <strong>{{ deptResult(d).director?.c.name || '—' }}</strong>
-          <span v-if="deptResult(d).sub"> · {{ L('Sub-Director', 'Subdirector/a') }}: <strong>{{ deptResult(d).sub?.c.name }}</strong></span></p>
+        <p v-if="d.approved">{{ L('Director', 'Director/a') }}: <strong>{{ d.approved.director?.name || '—' }}</strong>
+          <span v-if="d.approved.sub"> · {{ L('Sub-Director', 'Subdirector/a') }}: <strong>{{ d.approved.sub.name }}</strong></span> ✓</p>
+        <p v-else>{{ L('Director', 'Director/a') }}: <strong>{{ deptResult(d).director?.c.name || '—' }}</strong> <span class="sub">({{ L('not approved yet', 'aún no aprobado') }})</span></p>
       </article>
       <button class="primary" @click="copySummary">{{ copied ? L('Copied', 'Copiado') : L('Copy summary for the minutes', 'Copiar resumen para las actas') }}</button>
       <button @click="endSession">{{ L('Start a new session', 'Comenzar una nueva sesión') }}</button>
@@ -385,6 +412,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .rname { position: relative; line-height: 44px; padding-left: 12px; font-weight: 600; color: var(--navy); mix-blend-mode: normal; }
 .resultrow:nth-child(1) .bar { background: var(--gold); }
 .sub { opacity: .8; }
+.approvedstamp { background: #eaf7ec; border: 1.5px solid #4c9a58; color: #1e5c2a; border-radius: 12px; padding: 12px 14px; font-weight: 700; margin-top: 14px; }
+.dashbox { border-top: 2px solid var(--line); margin-top: 16px; padding-top: 12px; text-align: left; }
+.dashbox p { overflow-wrap: anywhere; }
+.btnlink { display: block; text-align: center; padding: 10px 14px; border-radius: 999px; border: 1.5px solid var(--navy); color: var(--navy); font-weight: 700; text-decoration: none; margin: 6px 0; }
+.btnlink:first-of-type { background: var(--navy); color: #fff; }
 .switchrow { display: flex; align-items: center; gap: 10px; background: #eef3fa; border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 14px; font-size: 1rem; }
 .switchrow input { width: 22px; height: 22px; margin: 0; min-height: 0; accent-color: var(--navy); }
 .pininput { font-size: 1.3rem; font-weight: 800; letter-spacing: .35em; text-align: center; max-width: 220px; }
