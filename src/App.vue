@@ -27,6 +27,8 @@ const nameDraft = ref('')
 let poll: number | undefined
 
 const qrJoinUrl = () => (session.value ? joinUrl(session.value.code) : '#')
+const sessionId = computed(() => session.value?.ballot.sessionId || '')
+const sessionIdShort = computed(() => sessionId.value ? sessionId.value.slice(0, 8).toUpperCase() : '—')
 const dept = computed<SimpleDept | null>(() => session.value?.ballot.departments[session.value.ballot.current] || null)
 const phase = computed(() => session.value?.ballot.phase || 'names')
 const isDone = computed(() => (phase.value as string) === 'done')
@@ -47,7 +49,7 @@ function addSetupDept() {
 }
 function removeSetupDept(i: number) { setupDepts.splice(i, 1) }
 
-const pin = ref(newSessionCode())
+const pin = ref('')
 const pinError = ref('')
 const validPin = (v: string) => /^\d{6}$/.test(v.trim())
 async function startSession() {
@@ -60,7 +62,7 @@ async function startSession() {
   const s: VoteSession = {
     code, title: title.value.trim() || L('Church Election', 'Elección de la Iglesia'), church: church.value.trim(),
     lang: lang.value, open: true, createdAt: new Date().toISOString(),
-    ballot: { departments: setupDepts.map(d => ({ id: crypto.randomUUID(), name: d.name, candidates: [], suggestions: [] })), current: 0, phase: 'names', allowSuggestions: true },
+    ballot: { departments: setupDepts.map(d => ({ id: crypto.randomUUID(), name: d.name, candidates: [], suggestions: [] })), current: 0, phase: 'names', allowSuggestions: true, sessionId: crypto.randomUUID() },
   }
   await createSession(s)
   session.value = s
@@ -139,7 +141,7 @@ function deptResult(d: SimpleDept) {
 const copied = ref(false)
 async function copySummary() {
   if (!session.value) return
-  const lines = [`${session.value.title} — ${session.value.church}`, '']
+  const lines = [`${session.value.title} — ${session.value.church}`, `${L('Session ID', 'ID de sesión')}: ${sessionId.value}`, `${L('Date', 'Fecha')}: ${new Date(session.value.createdAt).toLocaleString()}`, '']
   for (const d of session.value.ballot.departments) {
     const r = deptResult(d)
     lines.push(`${d.name}:`)
@@ -181,6 +183,7 @@ async function endSession() {
   if (saved?.code) {
     const s = await getSession(saved.code).catch(() => null)
     if (s && s.ballot.phase !== 'done') {
+      if (!s.ballot.sessionId) { s.ballot.sessionId = crypto.randomUUID(); await updateSession(s).catch(() => {}) }
       session.value = s
       title.value = s.title; church.value = s.church
       qrDataUrl.value = await QRCode.toDataURL(joinUrl(s.code), { width: 300 })
@@ -216,12 +219,13 @@ watch(lang, () => persist())
       <ol class="deptlist">
         <li v-for="(d, i) in setupDepts" :key="i"><strong>{{ d.name }}</strong> <button @click="removeSetupDept(i)">{{ L('Remove', 'Eliminar') }}</button></li>
       </ol>
-      <h3>{{ L('Session PIN (6 digits)', 'PIN de la sesión (6 dígitos)') }}</h3>
-      <p class="sub">{{ L('This PIN is the gate to the anonymous vote: only people with this PIN can join and vote. You can set your own, or use the one generated — and you can change it anytime during the session.', 'Este PIN es la puerta al voto anónimo: solo las personas con este PIN pueden unirse y votar. Puede poner el suyo, o usar el generado — y puede cambiarlo en cualquier momento durante la sesión.') }}</p>
-      <label>{{ L('PIN', 'PIN') }}<input v-model="pin" inputmode="numeric" maxlength="6" class="pininput" /></label>
-      <button @click="pin = newSessionCode()">🎲 {{ L('Generate a new PIN', 'Generar un PIN nuevo') }}</button>
+      <h3>{{ L('Session PIN — set by the pastor (6 digits)', 'PIN de la sesión — definido por el pastor (6 dígitos)') }}</h3>
+      <p class="sub">{{ L('The pastor sets this PIN. It is the gate that protects the integrity of the vote: only people with this PIN can join, submit names, and vote. It starts blank on purpose — type the PIN you choose, or generate one and keep it. You can also change it anytime during the session.', 'El pastor define este PIN. Es la puerta que protege la integridad del voto: solo las personas con este PIN pueden unirse, enviar nombres y votar. Comienza en blanco a propósito — escriba el PIN que usted elija, o genere uno y consérvelo. También puede cambiarlo en cualquier momento durante la sesión.') }}</p>
+      <label>{{ L('PIN', 'PIN') }}<input v-model="pin" inputmode="numeric" maxlength="6" class="pininput" :placeholder="L('Pastor sets 6 digits', 'El pastor define 6 dígitos')" /></label>
+      <button @click="pin = newSessionCode()">🎲 {{ L('Generate one for me', 'Generar uno para mí') }}</button>
       <p v-if="pinError" class="error">{{ pinError }}</p>
-      <button class="primary big" :disabled="!setupDepts.length" @click="startSession">{{ L('Start session', 'Iniciar sesión') }} →</button>
+      <button class="primary big" :disabled="!setupDepts.length || !validPin(pin)" @click="startSession">{{ L('Start session', 'Iniciar sesión') }} →</button>
+      <p v-if="setupDepts.length && !validPin(pin)" class="sub">{{ L('Set a 6-digit PIN above to start.', 'Defina un PIN de 6 dígitos arriba para comenzar.') }}</p>
       <p class="sub">{{ L('Simple, Kahoot-style: one department at a time, on the big screen.', 'Simple, estilo Kahoot: un departamento a la vez, en la pantalla grande.') }}</p>
       <p v-if="!isLiveBackend" class="error">{{ L('Local demo mode: sessions live only on THIS device. Test the full flow here or in another tab of this browser — other phones will get \'Session not found\' until the shared database (live mode) is connected.', 'Modo demo local: las sesiones viven solo en ESTE dispositivo. Pruebe el flujo aquí o en otra pestaña de este navegador — otros teléfonos verán \'Sesión no encontrada\' hasta que se conecte la base de datos compartida (modo en vivo).') }}</p>
     </section>
@@ -230,6 +234,7 @@ watch(lang, () => persist())
     <template v-else-if="session && !isDone && dept">
       <section class="card stagehead">
         <p class="kicker">{{ session.title }} · {{ L('Department', 'Departamento') }} {{ session.ballot.current + 1 }} {{ L('of', 'de') }} {{ totalDepts }}</p>
+        <p class="sub">{{ L('Session ID', 'ID de sesión') }}: <strong>{{ sessionIdShort }}</strong> · PIN: <strong>{{ session.code }}</strong></p>
         <h2 class="deptname">{{ dept.name }}</h2>
         <p>
           <span class="badge" :class="{ open: phase === 'voting' }">{{ phase === 'names' ? L('Collecting names', 'Recibiendo nombres') : phase === 'voting' ? L('VOTING OPEN', 'VOTACIÓN ABIERTA') : L('Results', 'Resultados') }}</span>
@@ -325,6 +330,7 @@ watch(lang, () => persist())
     <!-- SUMMARY -->
     <section v-else class="card">
       <h2>{{ L('Elected board', 'Junta electa') }} — {{ session?.title }}</h2>
+      <p class="sub">{{ L('Session ID', 'ID de sesión') }}: <strong>{{ sessionId }}</strong></p>
       <article v-for="d in session?.ballot.departments" :key="d.id" class="office">
         <h4>{{ d.name }}</h4>
         <p>{{ L('Director', 'Director/a') }}: <strong>{{ deptResult(d).director?.c.name || '—' }}</strong>
