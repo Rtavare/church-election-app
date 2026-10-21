@@ -38,8 +38,15 @@ const es = () => session.value?.lang === 'es'
         <p>{{ es() ? 'Voto anónimo — su nombre nunca se registra.' : 'Anonymous ballot — your name is never recorded.' }}</p>
         <fieldset v-for="o in session.ballot.offices" :key="o.id">
           <legend>{{ o.department }} — {{ o.role }}</legend>
-          <label v-for="n in o.nominees" :key="n.id">
-            <input type="radio" :name="o.id" :value="n.id" v-model="choices[o.id]" /> {{ n.name }}
+          <label class="bypick">{{ es() ? 'Seleccionar por número' : 'Select by number' }}
+            <select v-model="choices[o.id]">
+              <option :value="undefined">—</option>
+              <option v-for="(n, ni) in o.nominees" :key="n.id" :value="n.id">{{ n.number ?? ni + 1 }} · {{ n.name }}</option>
+              <option :value="null">{{ es() ? 'Abstenerse' : 'Abstain' }}</option>
+            </select>
+          </label>
+          <label v-for="(n, ni) in o.nominees" :key="n.id">
+            <input type="radio" :name="o.id" :value="n.id" v-model="choices[o.id]" /> <span class="bignum">{{ n.number ?? ni + 1 }}</span> {{ n.name }}
           </label>
           <label><input type="radio" :name="o.id" :value="null" v-model="choices[o.id]" /> {{ es() ? 'Abstenerse' : 'Abstain' }}</label>
         </fieldset>
@@ -69,6 +76,9 @@ button.primary {
   background: var(--navy); color: #fff; border: 1.5px solid var(--navy); padding: 12px 22px;
   border-radius: 999px; cursor: pointer; font: inherit; font-weight: 700; min-height: 48px; width: 100%;
 }
+.bignum { display: inline-grid; place-items: center; min-width: 40px; height: 40px; padding: 0 8px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: 1.15rem; }
+.bypick { background: #eef3fa; border-style: dashed; }
+select { margin-left: 8px; padding: 10px 12px; border-radius: 10px; border: 1.5px solid var(--line); background: #fff; font: inherit; min-height: 44px; }
 .sub { opacity: .8; }
 .ok { background: #fdf8e7; border: 1px solid var(--gold); padding: 14px; border-radius: var(--radius); font-weight: 600; }
 </style>
