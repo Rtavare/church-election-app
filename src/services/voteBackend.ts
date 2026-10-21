@@ -12,11 +12,14 @@
 // There is deliberately no voter field anywhere in this layer.
 
 export type SessionPhase = 'names' | 'voting' | 'results' | 'done'
+export interface OfficialSnap { name: string; number: number; votes: number }
+export interface ApprovedResult { director?: OfficialSnap; sub?: OfficialSnap; approvedAt: string }
 export interface SimpleDept {
   id: string
   name: string
   candidates: { id: string; name: string }[] // number = order added (index + 1)
   suggestions: string[] // names submitted from phones, waiting for pastor/secretary to add
+  approved?: ApprovedResult | null // set when the committee's vote is submitted as approved
 }
 /** Kahoot-style simple session: one department at a time. */
 export interface SessionBallotDef {
@@ -181,3 +184,5 @@ export const publicBaseUrl = (): string => {
   return `${window.location.origin}${window.location.pathname}`
 }
 export const joinUrl = (code: string) => `${publicBaseUrl()}#/vote/${code}`
+export const dashboardUrl = (code: string, sessionId: string) => `${publicBaseUrl()}#/dashboard/${code}/${sessionId}`
+export const dashboardEntryUrl = () => `${publicBaseUrl()}#/dashboard`
