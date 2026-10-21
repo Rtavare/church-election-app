@@ -13,6 +13,7 @@ const picked = ref<string | null>(null)
 const done = ref(false)
 let poll: number | undefined
 
+const closed = computed(() => !!session.value && session.value.open === false)
 const dept = computed(() => session.value?.ballot.departments[session.value.ballot.current] || null)
 const phase = computed(() => session.value?.ballot.phase || 'names')
 const es = computed(() => session.value?.lang === 'es')
@@ -47,6 +48,7 @@ async function vote(candidateId: string) {
   <main class="wrap">
     <h1>{{ session?.title || (es ? 'Elección de la Iglesia' : 'Church Election') }}</h1>
     <p v-if="missing">{{ es ? 'Sesión no encontrada. Verifica el código con el pastor.' : 'Session not found. Check the code with the pastor.' }}</p>
+    <p v-else-if="closed" class="ok">{{ es ? 'Esta sesión se cerró o el PIN cambió. Pide al pastor el código nuevo.' : 'This session was closed or the PIN changed. Ask the pastor for the new code.' }}</p>
     <template v-else-if="session && dept">
       <p class="dept">{{ dept.name }}</p>
 
@@ -67,6 +69,9 @@ async function vote(candidateId: string) {
       <!-- VOTING: tap a number -->
       <template v-else-if="phase === 'voting'">
         <h2>{{ es ? 'Toca un número para votar' : 'Tap a number to vote' }}</h2>
+        <ol class="list biglist">
+          <li v-for="(c, i) in dept.candidates" :key="c.id"><span class="bignum">{{ i + 1 }}</span> <strong class="cname">{{ c.name }}</strong></li>
+        </ol>
         <p v-if="done" class="ok">{{ es ? 'Voto recibido. Gracias.' : 'Vote received. Thank you.' }}</p>
         <div v-else class="grid">
           <button v-for="(c, i) in dept.candidates" :key="c.id" class="tile" :class="{ picked: picked === c.id }" @click="vote(c.id)">
@@ -95,10 +100,12 @@ button.primary { background: var(--navy); color: #fff; border: 1.5px solid var(-
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; }
 .tile { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 10px; border-radius: 16px; border: 2px solid var(--line); background: #fff; cursor: pointer; font: inherit; box-shadow: var(--shadow); }
 .tile .n { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--navy); color: var(--gold-soft); font-size: 1.7rem; font-weight: 800; }
-.tile .nm { font-weight: 600; color: var(--navy); text-align: center; }
+.tile .nm { font-weight: 700; color: #16233a; text-align: center; font-size: 1.12rem; line-height: 1.25; }
 .tile:active, .tile.picked { border-color: var(--gold); background: #fdf8e7; }
 .list { list-style: none; padding: 0; }
 .list li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 1.1rem; }
+.biglist li { font-size: 1.3rem; padding: 12px 0; }
+.cname { color: #16233a; }
 .bignum { display: inline-grid; place-items: center; min-width: 40px; height: 40px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; }
 .sub { opacity: .8; }
 .ok { background: #fdf8e7; border: 1px solid var(--gold); padding: 14px; border-radius: var(--radius); font-weight: 600; }
