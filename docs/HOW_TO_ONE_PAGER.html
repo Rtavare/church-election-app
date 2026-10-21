@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Church Election App — How to Run the Vote (One Pager)</title>
+<style>
+  @page { size: letter; margin: 0.38in; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; color: #1c2733; margin: 0; line-height: 1.24; font-size: 11.2px; }
+  header { background: linear-gradient(135deg, #0b2447, #19376d); color: #fff; border-bottom: 4px solid #c9a227; border-radius: 12px; padding: 9px 14px; }
+  header h1 { margin: 0; font-size: 19px; }
+  header p { margin: 3px 0 0; color: #e8cf7a; font-size: 12.5px; }
+  header .url { color: #fff; font-weight: 700; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .card { border: 1.5px solid #d7dee8; border-radius: 12px; padding: 7px 10px; }
+  .card h2 { margin: 0 0 5px; font-size: 13.5px; color: #0b2447; }
+  .card h2 .n { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #0b2447; color: #e8cf7a; font-size: 12px; margin-right: 5px; }
+  ol, ul { margin: 4px 0 4px 16px; padding: 0; }
+  li { margin: 1.6px 0; }
+  .pins { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  .pins td { border: 1px solid #d7dee8; padding: 5px 7px; vertical-align: top; }
+  .pins td:first-child { font-weight: 800; color: #0b2447; width: 32%; background: #eef3fa; }
+  .warn { background: #fdf8e7; border: 1.5px solid #c9a227; border-radius: 12px; padding: 7px 10px; margin-top: 8px; }
+  .warn h2 { margin: 0 0 4px; font-size: 13px; color: #7a5d00; }
+  .full { margin-top: 8px; }
+  strong.gold { color: #7a5d00; }
+  footer { text-align: center; color: #5a6a7d; margin-top: 6px; font-size: 10px; }
+  .tag { display: inline-block; background: #eef3fa; border-radius: 999px; padding: 1px 8px; font-weight: 700; color: #19376d; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Church Election App — How to Run the Vote</h1>
+  <p>For the pastor / committee president &amp; secretary · App: <span class="url">rtavare.github.io/church-election-app</span> · EN/ES toggle top-right</p>
+</header>
+
+<div class="cols">
+  <div class="card">
+    <h2><span class="n">1</span>Start the session (host device)</h2>
+    <ol>
+      <li>Enter the session title and church name.</li>
+      <li><strong>Tap to select every department</strong> for next year — they run in the order you tap them. Add custom departments with the text box.</li>
+      <li>Set the <strong>Voting PIN</strong> and the <strong>Host PIN</strong> (see box below — they must be different).</li>
+      <li>Tap <strong>Start session</strong>. The screen shows the first department, the QR code, and the Voting PIN.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>🔑 The two PINs + Session ID — keep them straight</h2>
+    <table class="pins">
+      <tr><td>Voting PIN<br>(6 digits)</td><td>For the <strong>committee</strong>. Shown on the big screen with the QR. Used only to join, submit names, and vote.</td></tr>
+      <tr><td>Host PIN<br>(6 digits)</td><td><strong>Pastor/president only — never share with the committee.</strong> Together with the Session ID it restores the session and opens the dashboard.</td></tr>
+      <tr><td>Session ID</td><td>The session's permanent ID (host screen, dashboard panel). Tap <strong>“Copy Session ID + Host PIN”</strong> there and save it somewhere safe before you begin.</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">2</span>Names — repeat per department</h2>
+    <ol>
+      <li>Committee members scan the QR (or enter the Voting PIN) and <strong>submit names from their phones</strong>.</li>
+      <li>Submitted names appear in a yellow box on the host screen. The pastor or secretary taps <strong>+ Add</strong> to put a name on the official list (or types it directly).</li>
+      <li>Each added name gets the <strong>next number</strong> — 1, 2, 3… <strong>Duplicate names are rejected automatically.</strong></li>
+      <li>Optional: turn <strong>OFF</strong> the “Let the committee submit names” switch — then only the president/secretary can add names.</li>
+      <li>With 2+ names, tap <strong>Start voting</strong>.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">3</span>Vote · <span class="n">4</span>Approve</h2>
+    <ol>
+      <li>Phones show the numbered list and big <strong>number tiles</strong>. Each member taps the number that matches the name. <strong>One vote per phone, per department. Ballots are anonymous — no names are recorded.</strong></li>
+      <li>Watch the live vote count on the host screen. When everyone has voted, tap <strong>Close &amp; show results</strong>.</li>
+      <li>Review the ranked results, then tap <strong>Submit as approved → add to dashboard</strong>. This locks the result: <span class="tag">#1 = Director</span> <span class="tag">#2 = Sub-Director</span>.</li>
+      <li>Tap <strong>Next department</strong> and repeat steps 2–4.</li>
+    </ol>
+  </div>
+</div>
+
+<div class="card full">
+  <h2><span class="n">5</span>The live dashboard &amp; finishing</h2>
+  <ul>
+    <li><strong>Dashboard:</strong> open <strong>rtavare.github.io/church-election-app/#/dashboard</strong> and enter the <strong>Session ID + Host PIN</strong>. Church at the center, departments branching out, each with its approved Director and Sub-Director — updating live as you approve. Unapproved departments show live status (collecting names, voting, waiting).</li>
+    <li><strong>Finish:</strong> after the last department is approved, the app shows the <strong>elected board summary</strong>. Tap <strong>Copy summary for the minutes</strong> — it includes the Session ID and date for the church records.</li>
+  </ul>
+</div>
+
+<div class="warn">
+  <h2>⚠ If something goes wrong</h2>
+  <ul>
+    <li><strong>Host device dies / browser closes:</strong> on any device, open the app's start screen → <strong>Restore a session</strong> → enter <strong>Session ID + Host PIN</strong>. You pick up as host exactly where you left off.</li>
+    <li><strong>Voting PIN leaked:</strong> in the QR panel, <strong>Change PIN</strong>. The old QR/PIN stops working immediately; votes already cast stay counted. Announce the new PIN to the committee.</li>
+    <li><strong>Host PIN compromised:</strong> change it in the dashboard panel on the host screen.</li>
+    <li><strong>A phone says “Session not found”:</strong> it's using an old QR/PIN — have them scan the current QR on the host screen.</li>
+    <li><strong>Golden rules:</strong> the two PINs are never the same · the Host PIN never goes to the committee · no official appears on the dashboard until their department's vote is <strong>submitted as approved</strong>.</li>
+  </ul>
+</div>
+
+<footer>Iglesia Adventista Hispana de York · Follows the SDA Church Manual nominating-committee process (Ch. 8) · Voting is anonymous by design</footer>
+</body>
+</html>
