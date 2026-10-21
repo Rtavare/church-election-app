@@ -36,15 +36,21 @@ const totalDepts = computed(() => session.value?.ballot.departments.length || 0)
 
 // setup: department picker
 const setupDepts = reactive<{ presetId: string; name: string }[]>([])
-const presetId = ref(DEPARTMENTS[0].id)
+
 const customName = ref('')
-const availablePresets = computed(() => DEPARTMENTS.filter(p => p.id === 'custom' || !setupDepts.some(d => d.presetId === p.id)))
-function addSetupDept() {
-  const p = DEPARTMENTS.find(x => x.id === presetId.value)
-  if (!p) return
-  const name = p.id === 'custom' ? customName.value.trim() : (es.value ? p.es : p.en)
+const presetDepts = computed(() => DEPARTMENTS.filter(p => p.id !== 'custom'))
+const isSelected = (id: string) => setupDepts.some(d => d.presetId === id)
+function toggleDept(id: string) {
+  const i = setupDepts.findIndex(d => d.presetId === id)
+  if (i >= 0) { setupDepts.splice(i, 1); return }
+  const p = DEPARTMENTS.find(x => x.id === id)
+  if (p) setupDepts.push({ presetId: p.id, name: es.value ? p.es : p.en })
+}
+function addCustomDept() {
+  const name = customName.value.trim()
   if (!name) return
-  setupDepts.push({ presetId: p.id, name })
+  if (setupDepts.some(d => normalizeName(d.name) === normalizeName(name))) { customName.value = ''; return }
+  setupDepts.push({ presetId: `custom:${name}`, name })
   customName.value = ''
 }
 function removeSetupDept(i: number) { setupDepts.splice(i, 1) }
@@ -189,6 +195,26 @@ async function changePin() {
   pinMsg.value = L('PIN changed. The old QR and PIN no longer work — voters must join with the new PIN.', 'PIN cambiado. El QR y PIN anteriores ya no funcionan — los votantes deben unirse con el nuevo PIN.')
   persist()
 }
+const restorePin = ref('')
+const restoreId = ref('')
+const restoreError = ref('')
+async function restoreSession() {
+  restoreError.value = ''
+  const code = restorePin.value.trim()
+  if (!validPin(code)) { restoreError.value = L('Enter the 6-digit PIN.', 'Ingrese el PIN de 6 dígitos.'); return }
+  const s = await getSession(code).catch(() => null)
+  if (!s) { restoreError.value = L('No session found for that PIN.', 'No se encontró ninguna sesión con ese PIN.'); return }
+  if (s.ballot.sessionId && restoreId.value.trim().toLowerCase() !== s.ballot.sessionId.toLowerCase()) {
+    restoreError.value = L('That Session ID does not match this PIN.', 'Ese ID de sesión no coincide con este PIN.'); return
+  }
+  if (!s.ballot.sessionId) { s.ballot.sessionId = crypto.randomUUID(); await updateSession(s).catch(() => {}) }
+  session.value = s
+  title.value = s.title; church.value = s.church
+  qrDataUrl.value = await QRCode.toDataURL(joinUrl(s.code), { width: 300 })
+  ballots.value = await fetchBallots(s.code).catch(() => [])
+  persist()
+  startPolling()
+}
 async function endSession() {
   if (poll) clearInterval(poll)
   session.value = null; ballots.value = []; setupDepts.splice(0)
@@ -226,14 +252,15 @@ watch(lang, () => persist())
       <h2>{{ L('Start a session', 'Comenzar una sesión') }}</h2>
       <label>{{ L('Session title', 'Título de la sesión') }}<input v-model="title" :placeholder="L('e.g. Church Board Election 2027', 'ej. Elección de la Junta 2027')" /></label>
       <label>{{ L('Church', 'Iglesia') }}<input v-model="church" /></label>
-      <h3>{{ L('Departments for next year', 'Departamentos para el próximo año') }}</h3>
-      <label>{{ L('Department', 'Departamento') }}
-        <select v-model="presetId"><option v-for="d in availablePresets" :key="d.id" :value="d.id">{{ es ? d.es : d.en }}</option></select>
-      </label>
-      <label v-if="presetId === 'custom'">{{ L('Custom department name', 'Nombre del departamento personalizado') }}<input v-model="customName" /></label>
-      <button @click="addSetupDept">{{ L('Add department', 'Agregar departamento') }}</button>
+      <h3>{{ L('Departments for next year', 'Departamentos para el próximo año') }} <span class="selcount">{{ setupDepts.length }} {{ L('selected', 'seleccionados') }}</span></h3>
+      <p class="sub">{{ L('Tap to select as many as you need — the session runs them in the order you tap them.', 'Toque para seleccionar todos los que necesite — la sesión los ejecutará en el orden en que los toque.') }}</p>
+      <div class="deptgrid">
+        <button v-for="d in presetDepts" :key="d.id" type="button" class="deptchip" :class="{ on: isSelected(d.id) }" @click="toggleDept(d.id)">{{ isSelected(d.id) ? '✓ ' : '' }}{{ es ? d.es : d.en }}</button>
+      </div>
+      <label>{{ L('Custom department', 'Departamento personalizado') }}<input v-model="customName" :placeholder="L('Type a name…', 'Escriba un nombre…')" @keyup.enter="addCustomDept" /></label>
+      <button @click="addCustomDept">{{ L('Add custom department', 'Agregar departamento personalizado') }}</button>
       <ol class="deptlist">
-        <li v-for="(d, i) in setupDepts" :key="i"><strong>{{ d.name }}</strong> <button @click="removeSetupDept(i)">{{ L('Remove', 'Eliminar') }}</button></li>
+        <li v-for="(d, i) in setupDepts" :key="d.presetId"><strong>{{ i + 1 }}. {{ d.name }}</strong> <button @click="removeSetupDept(i)">{{ L('Remove', 'Eliminar') }}</button></li>
       </ol>
       <h3>{{ L('Session PIN — set by the pastor (6 digits)', 'PIN de la sesión — definido por el pastor (6 dígitos)') }}</h3>
       <p class="sub">{{ L('The pastor sets this PIN. It is the gate that protects the integrity of the vote: only people with this PIN can join, submit names, and vote. It starts blank on purpose — type the PIN you choose, or generate one and keep it. You can also change it anytime during the session.', 'El pastor define este PIN. Es la puerta que protege la integridad del voto: solo las personas con este PIN pueden unirse, enviar nombres y votar. Comienza en blanco a propósito — escriba el PIN que usted elija, o genere uno y consérvelo. También puede cambiarlo en cualquier momento durante la sesión.') }}</p>
@@ -243,6 +270,14 @@ watch(lang, () => persist())
       <button class="primary big" :disabled="!setupDepts.length || !validPin(pin)" @click="startSession">{{ L('Start session', 'Iniciar sesión') }} →</button>
       <p v-if="setupDepts.length && !validPin(pin)" class="sub">{{ L('Set a 6-digit PIN above to start.', 'Defina un PIN de 6 dígitos arriba para comenzar.') }}</p>
       <p class="sub">{{ L('Simple, Kahoot-style: one department at a time, on the big screen.', 'Simple, estilo Kahoot: un departamento a la vez, en la pantalla grande.') }}</p>
+      <div class="restorebox">
+        <h3>{{ L('Restore a session', 'Restaurar una sesión') }}</h3>
+        <p class="sub">{{ L('Started on another device, or this one restarted? Enter the PIN + Session ID and pick the session back up as host, exactly where it left off. Treat both like a password — together they give host control.', '¿Comenzó en otro dispositivo, o este se reinició? Ingrese el PIN + ID de sesión y retome la sesión como anfitrión, justo donde quedó. Trate ambos como una contraseña — juntos dan control total.') }}</p>
+        <label>{{ L('Session ID', 'ID de sesión') }}<input v-model="restoreId" :placeholder="L('Full session ID', 'ID de sesión completo')" /></label>
+        <label>{{ L('PIN', 'PIN') }}<input v-model="restorePin" inputmode="numeric" maxlength="6" class="pininput" @keyup.enter="restoreSession" /></label>
+        <button class="primary" @click="restoreSession">{{ L('Restore session', 'Restaurar sesión') }}</button>
+        <p v-if="restoreError" class="error">{{ restoreError }}</p>
+      </div>
       <p v-if="!isLiveBackend" class="error">{{ L('Local demo mode: sessions live only on THIS device. Test the full flow here or in another tab of this browser — other phones will get \'Session not found\' until the shared database (live mode) is connected.', 'Modo demo local: las sesiones viven solo en ESTE dispositivo. Pruebe el flujo aquí o en otra pestaña de este navegador — otros teléfonos verán \'Sesión no encontrada\' hasta que se conecte la base de datos compartida (modo en vivo).') }}</p>
     </section>
 
@@ -417,6 +452,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .dashbox p { overflow-wrap: anywhere; }
 .btnlink { display: block; text-align: center; padding: 10px 14px; border-radius: 999px; border: 1.5px solid var(--navy); color: var(--navy); font-weight: 700; text-decoration: none; margin: 6px 0; }
 .btnlink:first-of-type { background: var(--navy); color: #fff; }
+.selcount { font-size: .9rem; color: var(--muted); font-weight: 600; }
+.deptgrid { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.deptchip { border-radius: 999px; }
+.deptchip.on { background: var(--navy); color: #fff; border-color: var(--gold); box-shadow: inset 0 -3px 0 var(--gold); }
+.restorebox { border-top: 2px solid var(--line); margin-top: 20px; padding-top: 6px; }
 .switchrow { display: flex; align-items: center; gap: 10px; background: #eef3fa; border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 14px; font-size: 1rem; }
 .switchrow input { width: 22px; height: 22px; margin: 0; min-height: 0; accent-color: var(--navy); }
 .pininput { font-size: 1.3rem; font-weight: 800; letter-spacing: .35em; text-align: center; max-width: 220px; }
