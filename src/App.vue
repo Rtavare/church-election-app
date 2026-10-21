@@ -29,6 +29,9 @@ const customDept = ref('')
 const role = ref('')
 const slots = ref(1)
 const selectedPreset = computed(() => DEPARTMENTS.find(d => d.id === deptId.value))
+// Match the hosted prototype: departments already added disappear from the dropdown.
+const availableDepartments = computed(() =>
+  DEPARTMENTS.filter(d => d.id === 'custom' || !state.offices.some(o => o.departmentId === d.id)))
 function addOffice() {
   const preset = selectedPreset.value
   if (!preset) return
@@ -139,7 +142,7 @@ async function copyReport() {
       <section v-if="tab === 'offices'" class="card">
         <h3>{{ s.addOffice }}</h3>
         <label>{{ s.department }}
-          <select v-model="deptId"><option v-for="d in DEPARTMENTS" :key="d.id" :value="d.id">{{ state.lang === 'es' ? d.es : d.en }}</option></select>
+          <select v-model="deptId"><option v-for="d in availableDepartments" :key="d.id" :value="d.id">{{ state.lang === 'es' ? d.es : d.en }}</option></select>
         </label>
         <label v-if="deptId === 'custom'">{{ s.customDepartment }}<input v-model="customDept" /></label>
         <label>{{ s.role }}<input v-model="role" :placeholder="selectedPreset ? (state.lang === 'es' ? selectedPreset.roleEs : selectedPreset.roleEn) : ''" /></label>
