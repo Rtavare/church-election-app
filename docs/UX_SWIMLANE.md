@@ -12,6 +12,13 @@ Read left → right; a box lower/higher means the *other lane* acts at that stag
 | **Church Members / Voters** | Church votes the organizing committee, then votes the nominating committee (in business session) | — | — | Hears the 1st reading — no vote yet | May appear before the committee, or move to refer the whole report back | **Scan QR / enter code on own phone** (or pass-the-device): anonymous ballot, one vote per device, no name recorded. Majority elects | Receives the announced elected board |
 | **App / System** | Saves election on device; EN/ES toggle for all screens | Stores offices + nominees; hides anonymity: ballots carry **no voter field** | Flags anyone not yet Agreed so the report can't skip ahead cleanly | Generates the readable report view | Locks the report while referred; unlocks amended version | Creates session (QR + code), accepts one ballot per device, streams totals to chair every 3s, blocks ballots when closed | Totals-only results, elected badges, one-tap copy report for the minutes |
 
+## Inside the app — the working process (v2)
+The Chair works the Nominating stage in three explicit steps, in this order:
+1. **Departments** — add every department that will be active next year from the SDA dropdown (each can be toggled inactive or removed).
+2. **Candidates** — name the candidate pool *inside each department*.
+3. **Assignments** — each department carries positions (Director and Sub-Director by default; add Secretary, Treasurer, Coordinator, or a custom role) and a candidate from that department's pool is assigned to each position. Unassigned positions and assignees whose consent is not yet "Agreed" are flagged.
+The anonymous ballot then runs **per position**, with that department's candidates as the options; from Results, the chair can apply the vote winners as the assignments in one tap, or keep the manually assigned slate for the report.
+
 ## Happy path (one line)
 Chair sets up → Committee nominates (anonymous in-app ballots as needed) → Consent confirmed → 1st reading → Objections heard privately / report amended if needed → 2nd reading vote by QR or pass-the-device → Chair + secretary certify → Board announced.
 
