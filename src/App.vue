@@ -67,6 +67,8 @@ function removeCandidate(d: Department, c: Candidate) {
   d.positions.forEach(p => { if (p.candidateId === c.id) p.candidateId = null })
 }
 const candidateName = (d: Department, id: string | null) => d.candidates.find(c => c.id === id)?.name ?? '—'
+const candNumber = (d: Department, id: string | null) => { const i = d.candidates.findIndex(c => c.id === id); return i >= 0 ? i + 1 : null }
+const candLabel = (d: Department, id: string | null) => { const n = candNumber(d, id); return n ? `#${n} · ${candidateName(d, id)}` : candidateName(d, id) }
 const candidateConsent = (d: Department, id: string | null) => d.candidates.find(c => c.id === id)?.consent
 
 // ---------- Step 3: Assign Director, Sub-Director, etc. ----------
@@ -125,7 +127,7 @@ async function openQrVoting() {
   if (!state.election) return
   const code = newSessionCode()
   await createSession({ code, title: state.election.title, church: state.election.church, lang: state.lang, open: true, createdAt: new Date().toISOString(),
-    ballot: { offices: ballotItems.value.map(i => ({ id: i.position.id, department: deptName(i.dept), role: i.position.title, nominees: i.dept.candidates.map(c => ({ id: c.id, name: c.name })) })) } })
+    ballot: { offices: ballotItems.value.map(i => ({ id: i.position.id, department: deptName(i.dept), role: i.position.title, nominees: i.dept.candidates.map((c, ci) => ({ id: c.id, name: c.name, number: ci + 1 })) })) } })
   qrSessionCode.value = code
   qrJoinUrl.value = joinUrl(code)
   qrDataUrl.value = await QRCode.toDataURL(qrJoinUrl.value, { width: 280 })
@@ -148,6 +150,17 @@ const stageIndex = computed(() => stages.indexOf(state.stage))
 function moveStage(dir: 1 | -1) {
   state.stage = stages[Math.min(stages.length - 1, Math.max(0, stageIndex.value + dir))]
 }
+const copiedList = ref(false)
+async function copyNumberedList() {
+  const lines: string[] = []
+  for (const d of activeDepts.value) {
+    lines.push(`${deptName(d)}:`)
+    d.candidates.forEach((c, i) => lines.push(`  ${i + 1}. ${c.name}`))
+    lines.push('')
+  }
+  await navigator.clipboard.writeText(lines.join('\n')).catch(() => {})
+  copiedList.value = true; setTimeout(() => (copiedList.value = false), 2000)
+}
 const copied = ref(false)
 async function copyReport() {
   if (!state.election) return
@@ -155,7 +168,7 @@ async function copyReport() {
     `${s.value.chair}: ${state.election.chair} · ${s.value.secretary}: ${state.election.secretary}`, '']
   for (const d of activeDepts.value) {
     lines.push(`${deptName(d)}:`)
-    for (const p of d.positions) lines.push(`  ${p.title}: ${candidateName(d, p.candidateId)}`)
+    for (const p of d.positions) lines.push(`  ${p.title}: ${candLabel(d, p.candidateId)}`)
   }
   lines.push('', `${allBallots.value.length} ${s.value.ballotsCast}`)
   await navigator.clipboard.writeText(lines.join('\n')).catch(() => {})
@@ -235,12 +248,14 @@ async function copyReport() {
       <!-- STEPS 2–3: candidates per department, then assign roles -->
       <section v-if="tab === 'assign'" class="card">
         <h3>2 · {{ L('Candidates', 'Candidatos') }} &nbsp;→&nbsp; 3 · {{ L('Assign Director, Sub-Director…', 'Asignar Director, Subdirector…') }}</h3>
+        <p class="sub">{{ L('Candidates are numbered 1…N inside each department. For voting, committee members just select the number that matches the name.', 'Los candidatos se numeran 1…N dentro de cada departamento. Para votar, los miembros del comité solo seleccionan el número que coincide con el nombre.') }}</p>
+        <button @click="copyNumberedList">{{ copiedList ? s.reportCopied : L('Copy numbered candidate list', 'Copiar lista numerada de candidatos') }}</button>
         <p v-if="!activeDepts.length" class="sub">{{ L('Add and activate departments first (step 1).', 'Primero agregue y active departamentos (paso 1).') }}</p>
         <article v-for="d in activeDepts" :key="d.id" class="office">
           <h4>{{ deptName(d) }}</h4>
           <h5>{{ L('Candidate pool', 'Candidatos del departamento') }} · {{ s.consent }}</h5>
           <ul>
-            <li v-for="c in d.candidates" :key="c.id">{{ c.name }}
+            <li v-for="(c, ci) in d.candidates" :key="c.id"><span class="num">{{ ci + 1 }}</span> {{ c.name }}
               <select v-model="c.consent"><option v-for="cv in (['not-asked','asked','agreed','declined'] as Consent[])" :key="cv" :value="cv">{{ s.consentValues[cv] }}</option></select>
               <button @click="removeCandidate(d, c)">{{ s.remove }}</button>
             </li>
@@ -254,7 +269,7 @@ async function copyReport() {
               <strong>{{ p.title }}:</strong>
               <select v-model="p.candidateId">
                 <option :value="null">— {{ L('Unassigned', 'Sin asignar') }} —</option>
-                <option v-for="c in d.candidates" :key="c.id" :value="c.id">{{ c.name }}</option>
+                <option v-for="(c, ci) in d.candidates" :key="c.id" :value="c.id">{{ ci + 1 }} · {{ c.name }}</option>
               </select>
               <span v-if="p.candidateId" class="badge" :class="{ open: candidateConsent(d, p.candidateId) === 'agreed', warn: candidateConsent(d, p.candidateId) !== 'agreed' }">
                 {{ s.consentValues[candidateConsent(d, p.candidateId) || 'not-asked'] }}
@@ -291,11 +306,19 @@ async function copyReport() {
           </div>
         </div>
         <p>{{ s.ballotIntro }}</p>
+        <p class="sub">{{ L('Each candidate has a number inside their department — select the number that matches the name you want.', 'Cada candidato tiene un número dentro de su departamento — seleccione el número que coincide con el nombre que desea.') }}</p>
         <div v-if="justCast" class="card ok"><p>{{ s.ballotCast }}</p><button class="primary" @click="justCast = false">{{ s.nextVoter }}</button></div>
         <template v-else-if="state.votingOpen">
           <fieldset v-for="item in ballotItems" :key="item.position.id">
             <legend>{{ deptName(item.dept) }} — {{ item.position.title }}</legend>
-            <label v-for="c in item.dept.candidates" :key="c.id"><input type="radio" :name="item.position.id" :value="c.id" v-model="draft[item.position.id]" /> {{ c.name }}</label>
+            <label class="bypick">{{ L('Select by number', 'Seleccionar por número') }}
+              <select v-model="draft[item.position.id]">
+                <option :value="undefined">—</option>
+                <option v-for="(c, ci) in item.dept.candidates" :key="c.id" :value="c.id">{{ ci + 1 }} · {{ c.name }}</option>
+                <option :value="null">{{ L('Abstain', 'Abstenerse') }}</option>
+              </select>
+            </label>
+            <label v-for="(c, ci) in item.dept.candidates" :key="c.id"><input type="radio" :name="item.position.id" :value="c.id" v-model="draft[item.position.id]" /> <span class="bignum">{{ ci + 1 }}</span> {{ c.name }}</label>
             <label><input type="radio" :name="item.position.id" :value="null" v-model="draft[item.position.id]" /> {{ s.abstain }}</label>
           </fieldset>
           <button class="primary" @click="castBallot">{{ s.castBallot }}</button>
@@ -308,14 +331,14 @@ async function copyReport() {
         <article v-for="d in activeDepts" :key="d.id" class="office">
           <h4>{{ deptName(d) }}</h4>
           <ul>
-            <li v-for="p in d.positions" :key="p.id"><strong>{{ p.title }}:</strong> {{ candidateName(d, p.candidateId) }}</li>
+            <li v-for="p in d.positions" :key="p.id"><strong>{{ p.title }}:</strong> {{ candLabel(d, p.candidateId) }}</li>
           </ul>
         </article>
         <h3>{{ s.results }} ({{ allBallots.length }} {{ s.ballotsCast }})</h3>
         <p v-if="!allBallots.length">{{ s.noVotesYet }}</p>
         <article v-for="item in ballotItems" :key="item.position.id" class="office">
           <h4>{{ deptName(item.dept) }} — {{ item.position.title }}</h4>
-          <ul><li v-for="(row, i) in tally(item)" :key="row.candidate.id">{{ row.candidate.name }}: {{ row.votes }} {{ s.votes }} <span v-if="i === 0 && row.votes > 0" class="badge open">{{ s.elected }}</span></li></ul>
+          <ul><li v-for="(row, i) in tally(item)" :key="row.candidate.id"><span class="num">{{ candNumber(item.dept, row.candidate.id) }}</span> {{ row.candidate.name }}: {{ row.votes }} {{ s.votes }} <span v-if="i === 0 && row.votes > 0" class="badge open">{{ s.elected }}</span></li></ul>
           <p class="sub">{{ s.abstain }}: {{ abstentions(item) }}</p>
         </article>
         <button v-if="allBallots.length" class="primary" @click="applyWinners">{{ L('Apply vote winners as assignments', 'Aplicar ganadores del voto como asignaciones') }}</button>
@@ -376,6 +399,12 @@ fieldset label:has(input:checked) { border-color: var(--gold); background: #fdf8
 fieldset input[type='radio'] { width: 22px; height: 22px; accent-color: var(--navy); margin: 0; min-height: 0; }
 .qrbox { text-align: center; border: 2px dashed var(--gold); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; background: linear-gradient(180deg, #fffdf4, #fff); }
 .qrbox img { border: 6px solid #fff; border-radius: 12px; box-shadow: var(--shadow); max-width: 100%; height: auto; }
+.num { display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 50%; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: .9rem; vertical-align: middle; }
+.bignum { display: inline-grid; place-items: center; min-width: 40px; height: 40px; padding: 0 8px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: 1.15rem; }
+.bypick { background: #eef3fa !important; border-style: dashed !important; }
 .bigcode { font-size: 2.6rem; font-weight: 800; letter-spacing: .35em; color: var(--navy); margin: 8px 0 0; text-indent: .35em; }
-@media (max-width: 560px) { .topbar h1 { font-size: 1.5rem; } .bigcode { font-size: 2rem; } }
+@media (max-width: 560px) { .topbar h1 { font-size: 1.5rem; } .num { display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 50%; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: .9rem; vertical-align: middle; }
+.bignum { display: inline-grid; place-items: center; min-width: 40px; height: 40px; padding: 0 8px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: 1.15rem; }
+.bypick { background: #eef3fa !important; border-style: dashed !important; }
+.bigcode { font-size: 2rem; } }
 </style>
