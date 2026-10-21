@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Church Election App — UX Swimlane</title>
+<style>
+  :root{--navy:#0b2447;--navy3:#19376d;--gold:#c9a227;--goldsoft:#e8cf7a;--ink:#16233a;--muted:#5b6b82;--line:#dbe3ef;--bg:#f3f6fb}
+  *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:linear-gradient(135deg,var(--navy),var(--navy3));border-bottom:4px solid var(--gold);color:#fff;padding:22px 26px}
+  header h1{margin:0;font-size:1.6rem;color:#fff} header p{margin:4px 0 0;color:var(--goldsoft)}
+  .scroll{overflow-x:auto;padding:18px}
+  table{border-collapse:separate;border-spacing:6px;min-width:1180px;width:100%}
+  th.stage{background:var(--navy);color:#fff;border-radius:10px;padding:10px;font-size:.92rem}
+  th.stage span{display:block;color:var(--goldsoft);font-weight:600;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase}
+  td.lane{background:var(--navy);color:#fff;border-radius:10px;padding:12px;font-weight:700;writing-mode:initial;min-width:130px;vertical-align:top}
+  td.lane small{display:block;color:var(--goldsoft);font-weight:500;margin-top:4px}
+  td{background:transparent;vertical-align:top;padding:0}
+  .box{background:#fff;border:1.5px solid var(--line);border-top:4px solid var(--gold);border-radius:12px;padding:10px 12px;font-size:.88rem;box-shadow:0 4px 12px rgba(11,36,71,.07);height:100%}
+  .box b{color:var(--navy)} .empty{color:var(--muted);text-align:center;padding:14px;font-size:1.1rem}
+  .anon{border-top-color:var(--navy);background:#fdf8e7}
+  footer{padding:0 26px 26px;color:var(--muted);font-size:.92rem}
+  footer b{color:var(--navy)}
+  @media print{body{background:#fff}.scroll{overflow:visible}table{min-width:0}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Church Election App — User Experience Swimlane</h1>
+  <p>Nominating Committee process · SDA Church Manual, Ch. 8 · Rows = who acts · Columns = stage</p>
+</header>
+<div class="scroll">
+<table>
+<tr>
+  <th></th>
+  <th class="stage"><span>Stage 1</span>Setup</th>
+  <th class="stage"><span>Stage 2</span>Nominating</th>
+  <th class="stage"><span>Stage 3</span>Consent</th>
+  <th class="stage"><span>Stage 4</span>Report · 1st Reading</th>
+  <th class="stage"><span>Stage 5</span>Objections</th>
+  <th class="stage"><span>Stage 6</span>Voting · 2nd Reading</th>
+  <th class="stage"><span>Stage 7</span>Certification</th>
+</tr>
+<tr>
+  <td class="lane">Pastor / Chair<small>runs the app</small></td>
+  <td><div class="box">Creates election: church, <b>1–2 yr term</b>, chair + secretary. Adds/removes <b>departments</b> from the SDA dropdown</div></td>
+  <td><div class="box">Convenes committee, leads prayerful deliberation per office</div></td>
+  <td><div class="box">Oversees consent checks before any name is read publicly</div></td>
+  <td><div class="box">Presents the report to the church</div></td>
+  <td><div class="box">Refers objections back to committee — motion to refer is <b>non-debatable, majority decides</b></div></td>
+  <td><div class="box">Opens voting: <b>projects QR + 6-digit code</b>, or runs pass-the-device. Closes voting</div></td>
+  <td><div class="box">Certifies the elected board with the secretary</div></td>
+</tr>
+<tr>
+  <td class="lane">Nominating Committee<small>deliberates</small></td>
+  <td><div class="empty">—</div></td>
+  <td><div class="box anon">Studies needs + fitness per office; proposes nominees. <b>Anonymous in-app ballot</b> when choosing between candidates</div></td>
+  <td><div class="box">Reviews consent flags: Asked / Agreed / Declined</div></td>
+  <td><div class="box">Supports the report as presented</div></td>
+  <td><div class="box">Hears objecting members <b>in private</b>; may replace a name and amend the report</div></td>
+  <td><div class="box">Votes as church members</div></td>
+  <td><div class="empty">—</div></td>
+</tr>
+<tr>
+  <td class="lane">Secretary<small>records</small></td>
+  <td><div class="box">Recorded in the election setup</div></td>
+  <td><div class="box">Records committee membership</div></td>
+  <td><div class="box">Tracks consent per nominee in the app</div></td>
+  <td><div class="box">Files the report for the minutes</div></td>
+  <td><div class="box">Notes referrals — no public debate recorded</div></td>
+  <td><div class="box">Records ballot count + totals</div></td>
+  <td><div class="box">Produces the <b>copyable minutes report</b>; files the certified board list</div></td>
+</tr>
+<tr>
+  <td class="lane">Nominees<small>are asked</small></td>
+  <td><div class="empty">—</div></td>
+  <td><div class="box">Not present during deliberation</div></td>
+  <td><div class="box">Asked privately → <b>Agree or Decline</b> in the tracker</div></td>
+  <td><div class="box">Name is read only if consent = Agreed</div></td>
+  <td><div class="box">May withdraw via the committee</div></td>
+  <td><div class="empty">—</div></td>
+  <td><div class="box">New officers take office for the term</div></td>
+</tr>
+<tr>
+  <td class="lane">Church Members / Voters<small>decide</small></td>
+  <td><div class="box">Vote the organizing committee, then vote the nominating committee (business session)</div></td>
+  <td><div class="empty">—</div></td>
+  <td><div class="empty">—</div></td>
+  <td><div class="box">Hears the 1st reading — <b>no vote yet</b></div></td>
+  <td><div class="box">May appear before the committee, or move to refer the whole report back</div></td>
+  <td><div class="box anon"><b>Scan QR / enter code</b> on own phone, or pass-the-device: anonymous ballot, one vote per device, no name recorded. <b>Majority elects</b></div></td>
+  <td><div class="box">Receives the announced elected board</div></td>
+</tr>
+<tr>
+  <td class="lane">App / System<small>enforces</small></td>
+  <td><div class="box">Saves election on device; EN/ES toggle everywhere</div></td>
+  <td><div class="box anon">Stores offices + nominees. Ballots carry <b>no voter field</b> — anonymity is structural</div></td>
+  <td><div class="box">Flags anyone not yet “Agreed”</div></td>
+  <td><div class="box">Generates the readable report view</div></td>
+  <td><div class="box">Locks report while referred; unlocks amended version</div></td>
+  <td><div class="box">Creates session (QR + code), one ballot per device, totals stream to chair every 3s, ballots blocked when closed</div></td>
+  <td><div class="box">Totals-only results, elected badges, one-tap copy for the minutes</div></td>
+</tr>
+</table>
+</div>
+<footer>
+  <p><b>Guardrails:</b> No nominations from the floor — names enter only through the Committee lane · No name reaches the Report stage without consent · Objections stay between Member and Committee lanes, never debated publicly · The System lane never learns who voted.</p>
+</footer>
+</body>
+</html>
