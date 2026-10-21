@@ -105,6 +105,28 @@ export async function submitSuggestion(code: string, name: string): Promise<void
   await updateSession(session)
 }
 
+/** Move already-cast ballots from one session code to another (used when the PIN changes). */
+export async function moveBallots(fromCode: string, toCode: string): Promise<void> {
+  if (isLiveBackend) {
+    await sb(`vote_ballots?session_code=eq.${encodeURIComponent(fromCode)}`, { method: 'PATCH', body: JSON.stringify({ session_code: toCode }) }).catch(() => {})
+    return
+  }
+  const all = readLS<Record<string, RemoteBallot[]>>(LS_BALLOTS, {})
+  if (all[fromCode]?.length) { all[toCode] = [...(all[toCode] || []), ...all[fromCode]]; delete all[fromCode]; writeLS(LS_BALLOTS, all) }
+}
+
+export async function deleteSession(code: string): Promise<void> {
+  if (isLiveBackend) {
+    // Best effort: delete the row; if RLS blocks it, closing the session still kills the PIN.
+    await sb(`vote_sessions?code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' }).catch(() => {})
+    await sb(`vote_sessions?code=eq.${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify({ open: false }) }).catch(() => {})
+    return
+  }
+  const all = readLS<Record<string, VoteSession>>(LS_SESSIONS, {})
+  delete all[code]
+  writeLS(LS_SESSIONS, all)
+}
+
 export async function setSessionOpen(code: string, open: boolean): Promise<void> {
   if (isLiveBackend) {
     await sb(`vote_sessions?code=eq.${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify({ open }) })
