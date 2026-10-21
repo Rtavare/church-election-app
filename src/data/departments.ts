@@ -36,5 +36,9 @@ export const DEPARTMENTS: DepartmentPreset[] = [
   { id: 'possibility', en: 'Possibility Ministries (Disabilities)', es: 'Ministerios de Posibilidades (Discapacidades)', roleEn: 'Coordinator', roleEs: 'Coordinador/a' },
   { id: 'interest', en: 'Interest Coordinator / Bible School', es: 'Coordinador de Interesados / Escuela Bíblica', roleEn: 'Coordinator', roleEs: 'Coordinador/a' },
   { id: 'prayer', en: 'Prayer Ministries', es: 'Ministerios de Oración', roleEn: 'Coordinator', roleEs: 'Coordinador/a' },
+  { id: 'hospitality', en: 'Hospitality Ministries', es: 'Ministerios de Hospitalidad', roleEn: 'Coordinator', roleEs: 'Coordinador/a' },
+  { id: 'home-school', en: 'Home and School Association', es: 'Asociación Hogar y Escuela', roleEn: 'Leader', roleEs: 'Director/a' },
+  { id: 'vbs', en: 'Vacation Bible School', es: 'Escuela Bíblica de Vacaciones', roleEn: 'Director', roleEs: 'Director/a' },
+  { id: 'public-campus', en: 'Public Campus Ministries', es: 'Ministerios en Campus Públicos', roleEn: 'Leader / Coordinator', roleEs: 'Director/a / Coordinador/a' },
   { id: 'custom', en: 'Custom department…', es: 'Departamento personalizado…', roleEn: '', roleEs: '' },
 ]
