@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onUnmounted, reactive, ref, watch } from 'vue'
+import QRCode from 'qrcode'
 import { DEPARTMENTS } from './data/departments'
 import { t } from './i18n'
 import type { AppState, Ballot, Consent, Lang, Office, Stage } from './types'
+import { createSession, fetchBallots, isLiveBackend, joinUrl, newSessionCode, setSessionOpen, type RemoteBallot } from './services/voteBackend'
 
 const KEY = 'church-election-v1'
 const load = (): AppState => {
@@ -64,13 +66,45 @@ function castBallot() {
   Object.keys(draft).forEach(k => delete draft[k])
   justCast.value = true
 }
+const allBallots = computed(() => [...state.ballots, ...remoteBallots.value])
 function tally(office: Office) {
   return office.nominees.map(n => ({
     nominee: n,
-    votes: state.ballots.filter(b => b.choices[office.id] === n.id).length,
+    votes: allBallots.value.filter(b => b.choices[office.id] === n.id).length,
   })).sort((a, b) => b.votes - a.votes)
 }
-const abstentions = (office: Office) => state.ballots.filter(b => !b.choices[office.id]).length
+const abstentions = (office: Office) => allBallots.value.filter(b => !b.choices[office.id]).length
+
+// ---- QR voting session (voters on their own phones) ----
+const remoteBallots = ref<RemoteBallot[]>([])
+const qrSessionCode = ref<string | null>(null)
+const qrDataUrl = ref('')
+const qrJoinUrl = ref('')
+const manualCode = ref('')
+let qrPoll: number | undefined
+async function refreshRemote() {
+  if (qrSessionCode.value) { try { remoteBallots.value = await fetchBallots(qrSessionCode.value) } catch { /* keep last */ } }
+}
+async function openQrVoting() {
+  if (!state.election) return
+  const code = newSessionCode()
+  await createSession({ code, title: state.election.title, church: state.election.church, lang: state.lang, open: true, createdAt: new Date().toISOString(),
+    ballot: { offices: state.offices.map(o => ({ id: o.id, department: o.department, role: o.role, nominees: o.nominees.map(n => ({ id: n.id, name: n.name })) })) } })
+  qrSessionCode.value = code
+  qrJoinUrl.value = joinUrl(code)
+  qrDataUrl.value = await QRCode.toDataURL(qrJoinUrl.value, { width: 280 })
+  state.votingOpen = true
+  await refreshRemote()
+  qrPoll = window.setInterval(refreshRemote, 3000)
+}
+async function closeQrVoting() {
+  if (qrSessionCode.value) await setSessionOpen(qrSessionCode.value, false).catch(() => {})
+  if (qrPoll) window.clearInterval(qrPoll)
+}
+function joinWithCode() {
+  if (/^\d{6}$/.test(manualCode.value.trim())) window.location.hash = `#/vote/${manualCode.value.trim()}`
+}
+onUnmounted(() => { if (qrPoll) window.clearInterval(qrPoll) })
 
 const stages: Stage[] = ['setup', 'nominating', 'consent', 'report', 'voting', 'certification', 'done']
 const stageIndex = computed(() => stages.indexOf(state.stage))
@@ -161,6 +195,23 @@ async function copyReport() {
       </section>
 
       <section v-if="tab === 'ballot'" class="card">
+        <div class="qrbox">
+          <h3>{{ state.lang === 'es' ? 'Votación por QR — teléfonos de los votantes' : 'QR voting — voters on their own phones' }}</h3>
+          <p class="badge" :class="{ open: isLiveBackend }">{{ isLiveBackend ? (state.lang === 'es' ? 'Modo en vivo (Supabase)' : 'Live mode (Supabase)') : (state.lang === 'es' ? 'Modo demo local — prueba en este navegador' : 'Local demo mode — test in this browser') }}</p>
+          <div v-if="qrSessionCode">
+            <img :src="qrDataUrl" alt="QR code to join the vote" width="280" height="280" />
+            <p class="bigcode">{{ qrSessionCode }}</p>
+            <p class="sub">{{ qrJoinUrl }}</p>
+            <p>{{ remoteBallots.length }} {{ s.ballotsCast }} (QR)</p>
+            <button @click="refreshRemote">{{ state.lang === 'es' ? 'Actualizar' : 'Refresh' }}</button>
+            <button @click="closeQrVoting">{{ s.closeVoting }}</button>
+          </div>
+          <button v-else class="primary" @click="openQrVoting">{{ state.lang === 'es' ? 'Abrir votación por QR' : 'Open QR voting' }}</button>
+          <div>
+            <input v-model="manualCode" :placeholder="state.lang === 'es' ? 'Código de 6 dígitos' : '6-digit join code'" inputmode="numeric" />
+            <button @click="joinWithCode">{{ state.lang === 'es' ? 'Unirse como votante' : 'Join as voter' }}</button>
+          </div>
+        </div>
         <p>{{ s.ballotIntro }}</p>
         <div v-if="justCast" class="card ok"><p>{{ s.ballotCast }}</p><button class="primary" @click="justCast = false">{{ s.nextVoter }}</button></div>
         <template v-else-if="state.votingOpen">
