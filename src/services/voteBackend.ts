@@ -12,7 +12,7 @@
 // There is deliberately no voter field anywhere in this layer.
 
 export interface SessionBallotDef {
-  offices: { id: string; department: string; role: string; nominees: { id: string; name: string }[] }[]
+  offices: { id: string; department: string; role: string; nominees: { id: string; name: string; number?: number }[] }[]
 }
 export interface VoteSession {
   code: string
