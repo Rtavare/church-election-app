@@ -28,6 +28,7 @@ export interface SessionBallotDef {
   phase: SessionPhase
   allowSuggestions?: boolean // president's switch: may the committee submit names from phones? (default true)
   sessionId?: string // unique, permanent ID for this session (separate from the join PIN)
+  hostPin?: string // pastor/president ONLY: pairs with sessionId for restore + dashboard. Never the committee voting PIN.
 }
 
 /** Name comparison for duplicate checks: ignores case, extra spaces and accents. */
@@ -184,5 +185,22 @@ export const publicBaseUrl = (): string => {
   return `${window.location.origin}${window.location.pathname}`
 }
 export const joinUrl = (code: string) => `${publicBaseUrl()}#/vote/${code}`
-export const dashboardUrl = (code: string, sessionId: string) => `${publicBaseUrl()}#/dashboard/${code}/${sessionId}`
+export const dashboardUrl = (sessionId: string, hostPin: string) => `${publicBaseUrl()}#/dashboard/${sessionId}/${hostPin}`
+
+/** Find a session by its Session ID (used by restore + dashboard, where the voting PIN is not the credential). */
+export async function getSessionById(sessionId: string): Promise<VoteSession | null> {
+  const id = sessionId.trim().toLowerCase()
+  if (!id) return null
+  if (isLiveBackend) {
+    // NOTE: the ->> JSON operator must stay URL-encoded (%3E) or PostgREST returns nothing.
+    const rows = await sb(`vote_sessions?ballot-%3E%3EsessionId=eq.${encodeURIComponent(id)}&select=*`)
+    return rows?.[0] ?? null
+  }
+  const all = readLS<Record<string, VoteSession>>(LS_SESSIONS, {})
+  return Object.values(all).find(s => (s.ballot.sessionId || '').toLowerCase() === id) || null
+}
+
+/** Host credential check: host PIN, or (legacy sessions without one) the voting PIN. */
+export const hostPinMatches = (session: VoteSession, pin: string) =>
+  session.ballot.hostPin ? pin === session.ballot.hostPin : pin === session.code
 export const dashboardEntryUrl = () => `${publicBaseUrl()}#/dashboard`
