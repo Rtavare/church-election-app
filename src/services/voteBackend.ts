@@ -23,7 +23,14 @@ export interface SessionBallotDef {
   departments: SimpleDept[]
   current: number // index of the department on screen
   phase: SessionPhase
+  allowSuggestions?: boolean // president's switch: may the committee submit names from phones? (default true)
 }
+
+/** Name comparison for duplicate checks: ignores case, extra spaces and accents. */
+export const normalizeName = (name: string) =>
+  name.trim().replace(/\s+/g, ' ').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+
+export type SuggestResult = 'added' | 'duplicate' | 'off' | 'unavailable'
 export interface VoteSession {
   code: string
   title: string
@@ -95,14 +102,23 @@ export async function updateSession(session: VoteSession): Promise<void> {
   writeLS(LS_SESSIONS, all)
 }
 
-/** A voter submits a name from their phone; pastor/secretary decides whether to add it. */
-export async function submitSuggestion(code: string, name: string): Promise<void> {
+/** A voter submits a name from their phone; pastor/secretary decides whether to add it.
+ *  Returns 'duplicate' when the name is already on the official list or already waiting,
+ *  and 'off' when the president has turned phone submissions off. */
+export async function submitSuggestion(code: string, name: string): Promise<SuggestResult> {
   const session = await getSession(code)
-  if (!session) return
+  if (!session) return 'unavailable'
   const dept = session.ballot.departments[session.ballot.current]
-  if (!dept || session.ballot.phase !== 'names') return
-  dept.suggestions = [...(dept.suggestions || []), name]
+  if (!dept || session.ballot.phase !== 'names') return 'unavailable'
+  if (session.ballot.allowSuggestions === false) return 'off'
+  const n = normalizeName(name)
+  if (!n) return 'unavailable'
+  const dup = dept.candidates.some(c => normalizeName(c.name) === n) ||
+    (dept.suggestions || []).some(sg => normalizeName(sg) === n)
+  if (dup) return 'duplicate'
+  dept.suggestions = [...(dept.suggestions || []), name.trim()]
   await updateSession(session)
+  return 'added'
 }
 
 /** Move already-cast ballots from one session code to another (used when the PIN changes). */
