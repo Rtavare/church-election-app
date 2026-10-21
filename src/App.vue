@@ -1,410 +1,326 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import QRCode from 'qrcode'
-import { DEPARTMENTS, ROLES } from './data/departments'
-import { t } from './i18n'
-import type { AppState, Ballot, Candidate, Consent, Department, Lang, Position, Stage } from './types'
-import { createSession, fetchBallots, isLiveBackend, joinUrl, newSessionCode, setSessionOpen, type RemoteBallot } from './services/voteBackend'
+import { DEPARTMENTS } from './data/departments'
+import { createSession, fetchBallots, getSession, isLiveBackend, joinUrl, newSessionCode, updateSession, type RemoteBallot, type SimpleDept, type VoteSession } from './services/voteBackend'
+import type { Lang } from './types'
 
-const KEY = 'church-election-v2'
-const load = (): AppState => {
-  try { return JSON.parse(localStorage.getItem(KEY) || '') as AppState } catch {
-    return { lang: 'en', election: null, stage: 'setup', committee: [], departments: [], votingOpen: false, ballots: [] }
-  }
-}
-const state = reactive<AppState>(load())
-watch(state, () => localStorage.setItem(KEY, JSON.stringify(state)), { deep: true })
-const s = computed(() => t(state.lang))
-const es = computed(() => state.lang === 'es')
-const setLang = (l: Lang) => { state.lang = l }
+// ——— Kahoot-style simple flow ———
+// Host: pick departments → show ONE department → names are submitted →
+// pastor/secretary adds each name to the list (number = order added) →
+// committee scans the QR and votes by number → results → next department.
+const KEY = 'church-election-simple-v1'
+interface HostState { lang: Lang; code: string | null; title: string; church: string }
+const saved = (() => { try { return JSON.parse(localStorage.getItem(KEY) || '') as HostState } catch { return null } })()
+const lang = ref<Lang>(saved?.lang || 'en')
+const es = computed(() => lang.value === 'es')
 const L = (en: string, esTxt: string) => (es.value ? esTxt : en)
+const setLang = (l: Lang) => { lang.value = l; persist() }
+function persist() { localStorage.setItem(KEY, JSON.stringify({ lang: lang.value, code: session.value?.code || null, title: title.value, church: church.value })) }
 
-const form = reactive({ title: '', church: '', termYears: 1 as 1 | 2, chair: '', secretary: '' })
-function createElection() {
-  if (!form.title.trim()) return
-  state.election = { id: crypto.randomUUID(), ...form }
-  state.stage = 'departments'
-}
-const newMember = ref('')
-function addMember() { if (newMember.value.trim()) { state.committee.push(newMember.value.trim()); newMember.value = '' } }
-
-// ---------- Step 1: Departments active next year ----------
-const deptName = (d: Department): string => {
-  if (d.presetId === 'custom') return d.customName
-  const p = DEPARTMENTS.find(x => x.id === d.presetId)
-  return p ? (es.value ? p.es : p.en) : d.customName
-}
-const deptPresetId = ref(DEPARTMENTS[0].id)
-const customDept = ref('')
-const availablePresets = computed(() =>
-  DEPARTMENTS.filter(p => p.id === 'custom' || !state.departments.some(d => d.presetId === p.id)))
-const roleTitle = (roleId: string) => { const r = ROLES.find(x => x.id === roleId); return r ? (es.value ? r.es : r.en) : roleId }
-function addDepartment() {
-  const preset = DEPARTMENTS.find(p => p.id === deptPresetId.value)
-  if (!preset) return
-  if (preset.id === 'custom' && !customDept.value.trim()) return
-  const mk = (roleId: string): Position => ({ id: crypto.randomUUID(), title: roleTitle(roleId), candidateId: null })
-  state.departments.push({
-    id: crypto.randomUUID(), presetId: preset.id,
-    customName: preset.id === 'custom' ? customDept.value.trim() : '',
-    activeNextYear: true, candidates: [], positions: [mk('director'), mk('sub-director')],
-  })
-  customDept.value = ''
-}
-function removeDepartment(id: string) { state.departments = state.departments.filter(d => d.id !== id) }
-const activeDepts = computed(() => state.departments.filter(d => d.activeNextYear))
-
-// ---------- Step 2: Candidates per department ----------
-const candidateDraft = reactive<Record<string, string>>({})
-function addCandidate(d: Department) {
-  const name = (candidateDraft[d.id] || '').trim()
-  if (!name) return
-  d.candidates.push({ id: crypto.randomUUID(), name, consent: 'not-asked' })
-  candidateDraft[d.id] = ''
-}
-function removeCandidate(d: Department, c: Candidate) {
-  d.candidates = d.candidates.filter(x => x.id !== c.id)
-  d.positions.forEach(p => { if (p.candidateId === c.id) p.candidateId = null })
-}
-const candidateName = (d: Department, id: string | null) => d.candidates.find(c => c.id === id)?.name ?? '—'
-const candNumber = (d: Department, id: string | null) => { const i = d.candidates.findIndex(c => c.id === id); return i >= 0 ? i + 1 : null }
-const candLabel = (d: Department, id: string | null) => { const n = candNumber(d, id); return n ? `#${n} · ${candidateName(d, id)}` : candidateName(d, id) }
-const candidateConsent = (d: Department, id: string | null) => d.candidates.find(c => c.id === id)?.consent
-
-// ---------- Step 3: Assign Director, Sub-Director, etc. ----------
-const roleDraft = reactive<Record<string, string>>({})
-const customRoleDraft = reactive<Record<string, string>>({})
-function addPosition(d: Department) {
-  const roleId = roleDraft[d.id] || 'director'
-  const title = roleId === 'custom-role' ? (customRoleDraft[d.id] || '').trim() : roleTitle(roleId)
-  if (!title) return
-  d.positions.push({ id: crypto.randomUUID(), title, candidateId: null })
-  customRoleDraft[d.id] = ''
-}
-function removePosition(d: Department, p: Position) { d.positions = d.positions.filter(x => x.id !== p.id) }
-const unassignedCount = computed(() =>
-  activeDepts.value.reduce((n, d) => n + d.positions.filter(p => !p.candidateId).length, 0))
-
-// ---------- Anonymous ballot: one choice per position, from that department's pool ----------
-interface BallotItem { position: Position; dept: Department }
-const ballotItems = computed<BallotItem[]>(() =>
-  activeDepts.value.flatMap(d => d.positions.map(position => ({ position, dept: d }))))
-const tab = ref<'process' | 'departments' | 'assign' | 'ballot' | 'results' | 'guide'>('process')
-const draft = reactive<Record<string, string | null>>({})
-const justCast = ref(false)
-function castBallot() {
-  const ballot: Ballot = { id: crypto.randomUUID(), castAt: new Date().toISOString(), choices: { ...draft } }
-  state.ballots.push(ballot)
-  Object.keys(draft).forEach(k => delete draft[k])
-  justCast.value = true
-}
-const remoteBallots = ref<RemoteBallot[]>([])
-const allBallots = computed(() => [...state.ballots, ...remoteBallots.value])
-function tally(item: BallotItem) {
-  return item.dept.candidates.map(c => ({
-    candidate: c,
-    votes: allBallots.value.filter(b => b.choices[item.position.id] === c.id).length,
-  })).sort((a, b) => b.votes - a.votes)
-}
-const abstentions = (item: BallotItem) => allBallots.value.filter(b => !b.choices[item.position.id]).length
-function applyWinners() {
-  for (const item of ballotItems.value) {
-    const top = tally(item)[0]
-    if (top && top.votes > 0) item.position.candidateId = top.candidate.id
-  }
-}
-
-// ---------- QR session ----------
-const qrSessionCode = ref<string | null>(null)
+const title = ref(saved?.title || '')
+const church = ref(saved?.church || '')
+const session = ref<VoteSession | null>(null)
+const ballots = ref<RemoteBallot[]>([])
 const qrDataUrl = ref('')
-const qrJoinUrl = ref('')
-const manualCode = ref('')
-let qrPoll: number | undefined
-async function refreshRemote() {
-  if (qrSessionCode.value) { try { remoteBallots.value = await fetchBallots(qrSessionCode.value) } catch { /* keep last */ } }
-}
-async function openQrVoting() {
-  if (!state.election) return
-  const code = newSessionCode()
-  await createSession({ code, title: state.election.title, church: state.election.church, lang: state.lang, open: true, createdAt: new Date().toISOString(),
-    ballot: { offices: ballotItems.value.map(i => ({ id: i.position.id, department: deptName(i.dept), role: i.position.title, nominees: i.dept.candidates.map((c, ci) => ({ id: c.id, name: c.name, number: ci + 1 })) })) } })
-  qrSessionCode.value = code
-  qrJoinUrl.value = joinUrl(code)
-  qrDataUrl.value = await QRCode.toDataURL(qrJoinUrl.value, { width: 280 })
-  state.votingOpen = true
-  await refreshRemote()
-  qrPoll = window.setInterval(refreshRemote, 3000)
-}
-async function closeQrVoting() {
-  if (qrSessionCode.value) await setSessionOpen(qrSessionCode.value, false).catch(() => {})
-  if (qrPoll) window.clearInterval(qrPoll)
-}
-function joinWithCode() {
-  if (/^\d{6}$/.test(manualCode.value.trim())) window.location.hash = `#/vote/${manualCode.value.trim()}`
-}
-onUnmounted(() => { if (qrPoll) window.clearInterval(qrPoll) })
+const nameDraft = ref('')
+let poll: number | undefined
 
-// ---------- Stages & report ----------
-const stages: Stage[] = ['setup', 'departments', 'candidates', 'assignments', 'consent', 'report', 'voting', 'certification', 'done']
-const stageIndex = computed(() => stages.indexOf(state.stage))
-function moveStage(dir: 1 | -1) {
-  state.stage = stages[Math.min(stages.length - 1, Math.max(0, stageIndex.value + dir))]
+const dept = computed<SimpleDept | null>(() => session.value?.ballot.departments[session.value.ballot.current] || null)
+const phase = computed(() => session.value?.ballot.phase || 'names')
+const isDone = computed(() => (phase.value as string) === 'done')
+const totalDepts = computed(() => session.value?.ballot.departments.length || 0)
+
+// setup: department picker
+const setupDepts = reactive<{ presetId: string; name: string }[]>([])
+const presetId = ref(DEPARTMENTS[0].id)
+const customName = ref('')
+const availablePresets = computed(() => DEPARTMENTS.filter(p => p.id === 'custom' || !setupDepts.some(d => d.presetId === p.id)))
+function addSetupDept() {
+  const p = DEPARTMENTS.find(x => x.id === presetId.value)
+  if (!p) return
+  const name = p.id === 'custom' ? customName.value.trim() : (es.value ? p.es : p.en)
+  if (!name) return
+  setupDepts.push({ presetId: p.id, name })
+  customName.value = ''
 }
-const copiedList = ref(false)
-async function copyNumberedList() {
-  const lines: string[] = []
-  for (const d of activeDepts.value) {
-    lines.push(`${deptName(d)}:`)
-    d.candidates.forEach((c, i) => lines.push(`  ${i + 1}. ${c.name}`))
-    lines.push('')
+function removeSetupDept(i: number) { setupDepts.splice(i, 1) }
+
+async function startSession() {
+  if (!setupDepts.length) return
+  const code = newSessionCode()
+  const s: VoteSession = {
+    code, title: title.value.trim() || L('Church Election', 'Elección de la Iglesia'), church: church.value.trim(),
+    lang: lang.value, open: true, createdAt: new Date().toISOString(),
+    ballot: { departments: setupDepts.map(d => ({ id: crypto.randomUUID(), name: d.name, candidates: [], suggestions: [] })), current: 0, phase: 'names' },
   }
-  await navigator.clipboard.writeText(lines.join('\n')).catch(() => {})
-  copiedList.value = true; setTimeout(() => (copiedList.value = false), 2000)
+  await createSession(s)
+  session.value = s
+  qrDataUrl.value = await QRCode.toDataURL(joinUrl(code), { width: 300 })
+  persist()
+  startPolling()
+}
+async function sync(patch?: Partial<VoteSession['ballot']>) {
+  if (!session.value) return
+  if (patch) session.value.ballot = { ...session.value.ballot, ...patch }
+  await updateSession(session.value)
+  session.value = { ...session.value }
+}
+async function refresh() {
+  if (!session.value) return
+  const fresh = await getSession(session.value.code).catch(() => null)
+  if (fresh) session.value = fresh
+  ballots.value = await fetchBallots(session.value.code).catch(() => ballots.value)
+}
+function startPolling() { if (poll) clearInterval(poll); poll = window.setInterval(refresh, 2500) }
+onUnmounted(() => { if (poll) clearInterval(poll) })
+
+// names stage
+async function addName(name: string) {
+  const n = name.trim()
+  if (!session.value || !dept.value || !n) return
+  dept.value.candidates.push({ id: crypto.randomUUID(), name: n })
+  await sync()
+}
+async function addDraftName() { await addName(nameDraft.value); nameDraft.value = '' }
+async function approveSuggestion(i: number) {
+  if (!dept.value) return
+  const [name] = dept.value.suggestions.splice(i, 1)
+  if (name) dept.value.candidates.push({ id: crypto.randomUUID(), name })
+  await sync()
+}
+async function dismissSuggestion(i: number) { dept.value?.suggestions.splice(i, 1); await sync() }
+async function removeCandidate(id: string) {
+  if (!dept.value) return
+  dept.value.candidates = dept.value.candidates.filter(c => c.id !== id)
+  await sync()
+}
+
+// voting / results
+const deptBallots = computed(() => dept.value ? ballots.value.filter(b => b.choices[dept.value!.id]) : [])
+const tally = computed(() => {
+  if (!dept.value) return []
+  return dept.value.candidates.map((c, i) => ({
+    candidate: c, number: i + 1,
+    votes: deptBallots.value.filter(b => b.choices[dept.value!.id] === c.id).length,
+  })).sort((a, b) => b.votes - a.votes)
+})
+const maxVotes = computed(() => Math.max(1, ...tally.value.map(t => t.votes)))
+async function startVoting() { await sync({ phase: 'voting' }) }
+async function showResults() { await sync({ phase: 'results' }) }
+async function backToNames() { await sync({ phase: 'names' }) }
+const isLast = computed(() => !!session.value && session.value.ballot.current >= totalDepts.value - 1)
+async function nextDept() {
+  if (!session.value) return
+  if (isLast.value) await sync({ phase: 'done' })
+  else await sync({ current: session.value.ballot.current + 1, phase: 'names' })
+  ballots.value = await fetchBallots(session.value.code).catch(() => ballots.value)
+}
+function deptResult(d: SimpleDept) {
+  const rows = d.candidates.map((c, i) => ({ c, number: i + 1, votes: ballots.value.filter(b => b.choices[d.id] === c.id).length })).sort((a, b) => b.votes - a.votes)
+  return { director: rows[0], sub: rows[1] }
 }
 const copied = ref(false)
-async function copyReport() {
-  if (!state.election) return
-  const lines = [`${state.election.title} — ${state.election.church} (${state.election.termYears}y)`,
-    `${s.value.chair}: ${state.election.chair} · ${s.value.secretary}: ${state.election.secretary}`, '']
-  for (const d of activeDepts.value) {
-    lines.push(`${deptName(d)}:`)
-    for (const p of d.positions) lines.push(`  ${p.title}: ${candLabel(d, p.candidateId)}`)
+async function copySummary() {
+  if (!session.value) return
+  const lines = [`${session.value.title} — ${session.value.church}`, '']
+  for (const d of session.value.ballot.departments) {
+    const r = deptResult(d)
+    lines.push(`${d.name}:`)
+    lines.push(`  ${L('Director', 'Director/a')}: ${r.director ? `#${r.director.number} ${r.director.c.name} (${r.director.votes})` : '—'}`)
+    if (r.sub) lines.push(`  ${L('Sub-Director', 'Subdirector/a')}: #${r.sub.number} ${r.sub.c.name} (${r.sub.votes})`)
   }
-  lines.push('', `${allBallots.value.length} ${s.value.ballotsCast}`)
   await navigator.clipboard.writeText(lines.join('\n')).catch(() => {})
   copied.value = true; setTimeout(() => (copied.value = false), 2000)
 }
+async function endSession() {
+  if (poll) clearInterval(poll)
+  session.value = null; ballots.value = []; setupDepts.splice(0)
+  localStorage.removeItem(KEY); persist()
+}
+// resume a session after reload
+;(async () => {
+  if (saved?.code) {
+    const s = await getSession(saved.code).catch(() => null)
+    if (s && s.ballot.phase !== 'done') {
+      session.value = s
+      title.value = s.title; church.value = s.church
+      qrDataUrl.value = await QRCode.toDataURL(joinUrl(s.code), { width: 300 })
+      ballots.value = await fetchBallots(s.code).catch(() => [])
+      startPolling()
+    }
+  }
+})()
+watch(lang, () => persist())
 </script>
 
 <template>
   <main class="wrap">
     <header class="topbar">
-      <div><h1>{{ s.appTitle }}</h1><p class="sub">{{ s.appSub }}</p></div>
-      <div class="lang" role="group" aria-label="Language">
-        <button :class="{ on: state.lang === 'en' }" @click="setLang('en')">EN · English</button>
-        <button :class="{ on: state.lang === 'es' }" @click="setLang('es')">ES · Español</button>
+      <div><h1>{{ L('Church Election', 'Elección de la Iglesia') }}</h1><p class="sub">{{ L('Nominating Committee · Simple live voting', 'Comité de Nombramientos · Votación simple en vivo') }}</p></div>
+      <div class="lang">
+        <button :class="{ on: lang === 'en' }" @click="setLang('en')">EN · English</button>
+        <button :class="{ on: lang === 'es' }" @click="setLang('es')">ES · Español</button>
       </div>
     </header>
 
-    <section v-if="!state.election" class="card">
-      <h2>{{ s.createElection }}</h2>
-      <label>{{ s.electionTitle }}<input v-model="form.title" /></label>
-      <label>{{ s.church }}<input v-model="form.church" /></label>
-      <label>{{ s.term }}<select v-model="form.termYears"><option :value="1">{{ s.oneYear }}</option><option :value="2">{{ s.twoYears }}</option></select></label>
-      <label>{{ s.chair }}<input v-model="form.chair" /></label>
-      <label>{{ s.secretary }}<input v-model="form.secretary" /></label>
-      <button class="primary" @click="createElection">{{ s.start }}</button>
+    <!-- SETUP -->
+    <section v-if="!session" class="card">
+      <h2>{{ L('Start a session', 'Comenzar una sesión') }}</h2>
+      <label>{{ L('Session title', 'Título de la sesión') }}<input v-model="title" :placeholder="L('e.g. Church Board Election 2027', 'ej. Elección de la Junta 2027')" /></label>
+      <label>{{ L('Church', 'Iglesia') }}<input v-model="church" /></label>
+      <h3>{{ L('Departments for next year', 'Departamentos para el próximo año') }}</h3>
+      <label>{{ L('Department', 'Departamento') }}
+        <select v-model="presetId"><option v-for="d in availablePresets" :key="d.id" :value="d.id">{{ es ? d.es : d.en }}</option></select>
+      </label>
+      <label v-if="presetId === 'custom'">{{ L('Custom department name', 'Nombre del departamento personalizado') }}<input v-model="customName" /></label>
+      <button @click="addSetupDept">{{ L('Add department', 'Agregar departamento') }}</button>
+      <ol class="deptlist">
+        <li v-for="(d, i) in setupDepts" :key="i"><strong>{{ d.name }}</strong> <button @click="removeSetupDept(i)">{{ L('Remove', 'Eliminar') }}</button></li>
+      </ol>
+      <button class="primary big" :disabled="!setupDepts.length" @click="startSession">{{ L('Start session', 'Iniciar sesión') }} →</button>
+      <p class="sub">{{ L('Simple, Kahoot-style: one department at a time, on the big screen.', 'Simple, estilo Kahoot: un departamento a la vez, en la pantalla grande.') }}</p>
     </section>
 
-    <template v-else>
-      <section class="card">
-        <h2>{{ state.election.title }}</h2>
-        <p>{{ state.election.church }} · {{ state.election.termYears }}y · {{ s.chair }}: {{ state.election.chair }}</p>
+    <!-- LIVE SESSION -->
+    <template v-else-if="session && !isDone && dept">
+      <section class="card stagehead">
+        <p class="kicker">{{ session.title }} · {{ L('Department', 'Departamento') }} {{ session.ballot.current + 1 }} {{ L('of', 'de') }} {{ totalDepts }}</p>
+        <h2 class="deptname">{{ dept.name }}</h2>
         <p>
-          <span class="badge">{{ activeDepts.length }} {{ L('departments active next year', 'departamentos activos el próximo año') }}</span>
-          <span class="badge" :class="{ open: state.votingOpen }">{{ state.votingOpen ? s.votingOpen : s.votingClosed }} · {{ allBallots.length }} {{ s.ballotsCast }}</span>
-          <span v-if="unassignedCount" class="badge warn">{{ unassignedCount }} {{ L('positions unassigned', 'puestos sin asignar') }}</span>
+          <span class="badge" :class="{ open: phase === 'voting' }">{{ phase === 'names' ? L('Collecting names', 'Recibiendo nombres') : phase === 'voting' ? L('VOTING OPEN', 'VOTACIÓN ABIERTA') : L('Results', 'Resultados') }}</span>
+          <span class="badge">{{ deptBallots.length }} {{ L('votes in', 'votos') }}</span>
+          <span class="badge" :class="{ open: isLiveBackend }">{{ isLiveBackend ? L('Live mode', 'Modo en vivo') : L('Local demo mode', 'Modo demo local') }}</span>
         </p>
-        <button v-if="!state.votingOpen" class="primary" @click="state.votingOpen = true">{{ s.openVoting }}</button>
-        <button v-else @click="state.votingOpen = false">{{ s.closeVoting }}</button>
+        <ol class="steps">
+          <li :class="{ cur: phase === 'names' }">1 · {{ L('Names', 'Nombres') }}</li>
+          <li :class="{ cur: phase === 'voting' }">2 · {{ L('Vote by number', 'Votar por número') }}</li>
+          <li :class="{ cur: phase === 'results' || phase === 'done' }">3 · {{ L('Results', 'Resultados') }}</li>
+        </ol>
       </section>
 
-      <nav class="tabs">
-        <button :class="{ on: tab === 'process' }" @click="tab = 'process'">{{ s.stages }}</button>
-        <button :class="{ on: tab === 'departments' }" @click="tab = 'departments'">1 · {{ s.offices }}</button>
-        <button :class="{ on: tab === 'assign' }" @click="tab = 'assign'">2–3 · {{ s.candAssign }}</button>
-        <button :class="{ on: tab === 'ballot' }" @click="tab = 'ballot'">{{ s.ballot }}</button>
-        <button :class="{ on: tab === 'results' }" @click="tab = 'results'">{{ s.results }}</button>
-        <button :class="{ on: tab === 'guide' }" @click="tab = 'guide'">{{ s.guide }}</button>
-      </nav>
+      <div class="grid">
+        <section class="card">
+          <!-- NAMES -->
+          <template v-if="phase === 'names'">
+            <h3>{{ L('Names for', 'Nombres para') }} {{ dept.name }}</h3>
+            <p class="sub">{{ L('Members submit names from their phones. The pastor or secretary adds each name here — it gets the next number.', 'Los miembros envían nombres desde sus teléfonos. El pastor o la secretaria agrega cada nombre aquí — recibe el siguiente número.') }}</p>
+            <div v-if="dept.suggestions.length" class="suggest">
+              <h4>{{ L('Submitted from phones — tap + to add', 'Enviados desde teléfonos — toque + para agregar') }}</h4>
+              <ul><li v-for="(sg, i) in dept.suggestions" :key="i">{{ sg }}
+                <button class="primary" @click="approveSuggestion(i)">+ {{ L('Add', 'Agregar') }}</button>
+                <button @click="dismissSuggestion(i)">✕</button></li></ul>
+            </div>
+            <ol class="candlist">
+              <li v-for="(c, i) in dept.candidates" :key="c.id"><span class="bignum">{{ i + 1 }}</span> {{ c.name }}
+                <button @click="removeCandidate(c.id)">✕</button></li>
+            </ol>
+            <p v-if="!dept.candidates.length" class="sub">{{ L('No names yet.', 'Aún no hay nombres.') }}</p>
+            <input v-model="nameDraft" :placeholder="L('Type a name and press Add', 'Escriba un nombre y presione Agregar')" @keyup.enter="addDraftName" />
+            <button class="primary" @click="addDraftName">{{ L('Add name', 'Agregar nombre') }}</button>
+            <div class="actions">
+              <button class="primary big" :disabled="dept.candidates.length < 2" @click="startVoting">{{ L('Start voting', 'Iniciar votación') }} →</button>
+            </div>
+          </template>
 
-      <section v-if="tab === 'process'" class="card">
-        <ol class="stages"><li v-for="(name, i) in s.stageNames" :key="name" :class="{ cur: i === stageIndex, done: i < stageIndex }">{{ name }}</li></ol>
-        <button @click="moveStage(-1)">{{ s.back }}</button>
-        <button class="primary" @click="moveStage(1)">{{ s.advance }}</button>
-        <h3>{{ s.committee }}</h3>
-        <ul><li v-for="(m, i) in state.committee" :key="i">{{ m }} <button @click="state.committee.splice(i, 1)">{{ s.remove }}</button></li></ul>
-        <input v-model="newMember" :placeholder="s.memberName" @keyup.enter="addMember" />
-        <button @click="addMember">{{ s.addMember }}</button>
-      </section>
+          <!-- VOTING -->
+          <template v-else-if="phase === 'voting'">
+            <h3>{{ L('Voting open — pick a number', 'Votación abierta — elija un número') }}</h3>
+            <ol class="candlist">
+              <li v-for="(c, i) in dept.candidates" :key="c.id"><span class="bignum">{{ i + 1 }}</span> {{ c.name }}</li>
+            </ol>
+            <p class="bigcount">{{ deptBallots.length }} {{ L('votes submitted', 'votos enviados') }}</p>
+            <div class="actions">
+              <button @click="backToNames">← {{ L('Back to names', 'Volver a nombres') }}</button>
+              <button class="primary big" @click="showResults">{{ L('Close & show results', 'Cerrar y mostrar resultados') }} →</button>
+            </div>
+          </template>
 
-      <!-- STEP 1: departments active next year -->
-      <section v-if="tab === 'departments'" class="card">
-        <h3>1 · {{ L('Departments active next year', 'Departamentos activos el próximo año') }}</h3>
-        <p class="sub">{{ L('Add every department that will operate next year. You will name its candidates and leaders next.', 'Agregue cada departamento que operará el próximo año. Luego nombrará sus candidatos y líderes.') }}</p>
-        <label>{{ s.department }}
-          <select v-model="deptPresetId"><option v-for="d in availablePresets" :key="d.id" :value="d.id">{{ es ? d.es : d.en }}</option></select>
-        </label>
-        <label v-if="deptPresetId === 'custom'">{{ s.customDepartment }}<input v-model="customDept" /></label>
-        <button class="primary" @click="addDepartment">{{ s.add }}</button>
-        <article v-for="d in state.departments" :key="d.id" class="office">
-          <h4>{{ deptName(d) }}</h4>
-          <label class="inline"><input type="checkbox" v-model="d.activeNextYear" /> {{ L('Active next year', 'Activo el próximo año') }}</label>
-          <span class="badge">{{ d.candidates.length }} {{ L('candidates', 'candidatos') }} · {{ d.positions.length }} {{ L('positions', 'puestos') }}</span>
-          <button @click="removeDepartment(d.id)">{{ s.remove }}</button>
-        </article>
-      </section>
+          <!-- RESULTS -->
+          <template v-else>
+            <h3>{{ L('Results', 'Resultados') }} — {{ dept.name }}</h3>
+            <div v-for="row in tally" :key="row.candidate.id" class="resultrow">
+              <span class="bignum">{{ row.number }}</span>
+              <div class="barwrap"><div class="bar" :style="{ width: `${(row.votes / maxVotes) * 100}%` }"></div><span class="rname">{{ row.candidate.name }}</span></div>
+              <strong>{{ row.votes }}</strong>
+            </div>
+            <p v-if="tally.length" class="sub">
+              {{ L('Director', 'Director/a') }}: <strong>{{ tally[0]?.candidate.name }}</strong>
+              <span v-if="tally[1]"> · {{ L('Sub-Director', 'Subdirector/a') }}: <strong>{{ tally[1].candidate.name }}</strong></span>
+            </p>
+            <div class="actions">
+              <button class="primary big" @click="nextDept">{{ isLast ? L('Finish — see summary', 'Terminar — ver resumen') : L('Next department', 'Siguiente departamento') }} →</button>
+            </div>
+          </template>
+        </section>
 
-      <!-- STEPS 2–3: candidates per department, then assign roles -->
-      <section v-if="tab === 'assign'" class="card">
-        <h3>2 · {{ L('Candidates', 'Candidatos') }} &nbsp;→&nbsp; 3 · {{ L('Assign Director, Sub-Director…', 'Asignar Director, Subdirector…') }}</h3>
-        <p class="sub">{{ L('Candidates are numbered 1…N inside each department. For voting, committee members just select the number that matches the name.', 'Los candidatos se numeran 1…N dentro de cada departamento. Para votar, los miembros del comité solo seleccionan el número que coincide con el nombre.') }}</p>
-        <button @click="copyNumberedList">{{ copiedList ? s.reportCopied : L('Copy numbered candidate list', 'Copiar lista numerada de candidatos') }}</button>
-        <p v-if="!activeDepts.length" class="sub">{{ L('Add and activate departments first (step 1).', 'Primero agregue y active departamentos (paso 1).') }}</p>
-        <article v-for="d in activeDepts" :key="d.id" class="office">
-          <h4>{{ deptName(d) }}</h4>
-          <h5>{{ L('Candidate pool', 'Candidatos del departamento') }} · {{ s.consent }}</h5>
-          <ul>
-            <li v-for="(c, ci) in d.candidates" :key="c.id"><span class="num">{{ ci + 1 }}</span> {{ c.name }}
-              <select v-model="c.consent"><option v-for="cv in (['not-asked','asked','agreed','declined'] as Consent[])" :key="cv" :value="cv">{{ s.consentValues[cv] }}</option></select>
-              <button @click="removeCandidate(d, c)">{{ s.remove }}</button>
-            </li>
-          </ul>
-          <input v-model="candidateDraft[d.id]" :placeholder="s.nomineeName" @keyup.enter="addCandidate(d)" />
-          <button @click="addCandidate(d)">{{ s.addNominee }}</button>
-
-          <h5>{{ L('Positions — assign a candidate to each', 'Puestos — asigne un candidato a cada uno') }}</h5>
-          <ul>
-            <li v-for="p in d.positions" :key="p.id">
-              <strong>{{ p.title }}:</strong>
-              <select v-model="p.candidateId">
-                <option :value="null">— {{ L('Unassigned', 'Sin asignar') }} —</option>
-                <option v-for="(c, ci) in d.candidates" :key="c.id" :value="c.id">{{ ci + 1 }} · {{ c.name }}</option>
-              </select>
-              <span v-if="p.candidateId" class="badge" :class="{ open: candidateConsent(d, p.candidateId) === 'agreed', warn: candidateConsent(d, p.candidateId) !== 'agreed' }">
-                {{ s.consentValues[candidateConsent(d, p.candidateId) || 'not-asked'] }}
-              </span>
-              <button @click="removePosition(d, p)">{{ s.remove }}</button>
-            </li>
-          </ul>
-          <label>{{ L('Add position', 'Agregar puesto') }}
-            <select v-model="roleDraft[d.id]">
-              <option v-for="r in ROLES" :key="r.id" :value="r.id">{{ es ? r.es : r.en }}</option>
-            </select>
-          </label>
-          <label v-if="roleDraft[d.id] === 'custom-role'">{{ L('Custom role name', 'Nombre del cargo') }}<input v-model="customRoleDraft[d.id]" /></label>
-          <button @click="addPosition(d)">{{ s.add }}</button>
-        </article>
-      </section>
-
-      <section v-if="tab === 'ballot'" class="card">
-        <div class="qrbox">
-          <h3>{{ L('QR voting — voters on their own phones', 'Votación por QR — teléfonos de los votantes') }}</h3>
-          <p class="badge" :class="{ open: isLiveBackend }">{{ isLiveBackend ? L('Live mode (Supabase)', 'Modo en vivo (Supabase)') : L('Local demo mode — test in this browser', 'Modo demo local — prueba en este navegador') }}</p>
-          <div v-if="qrSessionCode">
-            <img :src="qrDataUrl" alt="QR code to join the vote" width="280" height="280" />
-            <p class="bigcode">{{ qrSessionCode }}</p>
-            <p class="sub">{{ qrJoinUrl }}</p>
-            <p>{{ remoteBallots.length }} {{ s.ballotsCast }} (QR)</p>
-            <button @click="refreshRemote">{{ L('Refresh', 'Actualizar') }}</button>
-            <button @click="closeQrVoting">{{ s.closeVoting }}</button>
-          </div>
-          <button v-else class="primary" @click="openQrVoting">{{ L('Open QR voting', 'Abrir votación por QR') }}</button>
-          <div>
-            <input v-model="manualCode" :placeholder="L('6-digit join code', 'Código de 6 dígitos')" inputmode="numeric" />
-            <button @click="joinWithCode">{{ L('Join as voter', 'Unirse como votante') }}</button>
-          </div>
-        </div>
-        <p>{{ s.ballotIntro }}</p>
-        <p class="sub">{{ L('Each candidate has a number inside their department — select the number that matches the name you want.', 'Cada candidato tiene un número dentro de su departamento — seleccione el número que coincide con el nombre que desea.') }}</p>
-        <div v-if="justCast" class="card ok"><p>{{ s.ballotCast }}</p><button class="primary" @click="justCast = false">{{ s.nextVoter }}</button></div>
-        <template v-else-if="state.votingOpen">
-          <fieldset v-for="item in ballotItems" :key="item.position.id">
-            <legend>{{ deptName(item.dept) }} — {{ item.position.title }}</legend>
-            <label class="bypick">{{ L('Select by number', 'Seleccionar por número') }}
-              <select v-model="draft[item.position.id]">
-                <option :value="undefined">—</option>
-                <option v-for="(c, ci) in item.dept.candidates" :key="c.id" :value="c.id">{{ ci + 1 }} · {{ c.name }}</option>
-                <option :value="null">{{ L('Abstain', 'Abstenerse') }}</option>
-              </select>
-            </label>
-            <label v-for="(c, ci) in item.dept.candidates" :key="c.id"><input type="radio" :name="item.position.id" :value="c.id" v-model="draft[item.position.id]" /> <span class="bignum">{{ ci + 1 }}</span> {{ c.name }}</label>
-            <label><input type="radio" :name="item.position.id" :value="null" v-model="draft[item.position.id]" /> {{ s.abstain }}</label>
-          </fieldset>
-          <button class="primary" @click="castBallot">{{ s.castBallot }}</button>
-        </template>
-        <p v-else>{{ s.votingClosed }}</p>
-      </section>
-
-      <section v-if="tab === 'results'" class="card">
-        <h3>{{ L('Slate by department', 'Propuesta por departamento') }}</h3>
-        <article v-for="d in activeDepts" :key="d.id" class="office">
-          <h4>{{ deptName(d) }}</h4>
-          <ul>
-            <li v-for="p in d.positions" :key="p.id"><strong>{{ p.title }}:</strong> {{ candLabel(d, p.candidateId) }}</li>
-          </ul>
-        </article>
-        <h3>{{ s.results }} ({{ allBallots.length }} {{ s.ballotsCast }})</h3>
-        <p v-if="!allBallots.length">{{ s.noVotesYet }}</p>
-        <article v-for="item in ballotItems" :key="item.position.id" class="office">
-          <h4>{{ deptName(item.dept) }} — {{ item.position.title }}</h4>
-          <ul><li v-for="(row, i) in tally(item)" :key="row.candidate.id"><span class="num">{{ candNumber(item.dept, row.candidate.id) }}</span> {{ row.candidate.name }}: {{ row.votes }} {{ s.votes }} <span v-if="i === 0 && row.votes > 0" class="badge open">{{ s.elected }}</span></li></ul>
-          <p class="sub">{{ s.abstain }}: {{ abstentions(item) }}</p>
-        </article>
-        <button v-if="allBallots.length" class="primary" @click="applyWinners">{{ L('Apply vote winners as assignments', 'Aplicar ganadores del voto como asignaciones') }}</button>
-        <button @click="copyReport">{{ copied ? s.reportCopied : s.copyReport }}</button>
-        <button class="primary" @click="moveStage(1)">{{ s.certify }}</button>
-      </section>
-
-      <section v-if="tab === 'guide'" class="card"><ol><li v-for="line in s.guideBody" :key="line">{{ line }}</li></ol></section>
+        <aside class="card qrpanel">
+          <h3>{{ L('Join the session', 'Únase a la sesión') }}</h3>
+          <img :src="qrDataUrl" alt="QR code" width="300" height="300" />
+          <p class="bigcode">{{ session.code }}</p>
+          <p class="sub">{{ L('Scan the QR or enter the code on your phone. No app, no name — just vote by number.', 'Escanee el QR o ingrese el código en su teléfono. Sin app, sin nombre — solo vote por número.') }}</p>
+          <button @click="refresh">{{ L('Refresh', 'Actualizar') }}</button>
+        </aside>
+      </div>
     </template>
+
+    <!-- SUMMARY -->
+    <section v-else class="card">
+      <h2>{{ L('Elected board', 'Junta electa') }} — {{ session?.title }}</h2>
+      <article v-for="d in session?.ballot.departments" :key="d.id" class="office">
+        <h4>{{ d.name }}</h4>
+        <p>{{ L('Director', 'Director/a') }}: <strong>{{ deptResult(d).director?.c.name || '—' }}</strong>
+          <span v-if="deptResult(d).sub"> · {{ L('Sub-Director', 'Subdirector/a') }}: <strong>{{ deptResult(d).sub?.c.name }}</strong></span></p>
+      </article>
+      <button class="primary" @click="copySummary">{{ copied ? L('Copied', 'Copiado') : L('Copy summary for the minutes', 'Copiar resumen para las actas') }}</button>
+      <button @click="endSession">{{ L('Start a new session', 'Comenzar una nueva sesión') }}</button>
+    </section>
+
+    <p class="foot">SDA Church Manual, Ch. 8 · {{ L('Anonymous voting: ballots carry no name.', 'Votación anónima: los votos no llevan nombre.') }}</p>
   </main>
 </template>
 
 <style scoped>
-.wrap { max-width: 820px; margin: 0 auto; padding: 20px 16px 48px; }
-.topbar {
-  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
-  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-3) 100%);
-  border-bottom: 4px solid var(--gold); border-radius: var(--radius); padding: 22px 24px; box-shadow: var(--shadow); margin-bottom: 16px;
-}
-.topbar h1 { color: #fff; margin: 0; font-size: 1.9rem; letter-spacing: .2px; }
-.topbar .sub { color: var(--gold-soft); margin: 4px 0 0; font-size: .95rem; }
+.wrap { max-width: 1020px; margin: 0 auto; padding: 20px 16px 48px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; background: linear-gradient(135deg, var(--navy), var(--navy-3)); border-bottom: 4px solid var(--gold); border-radius: var(--radius); padding: 22px 24px; box-shadow: var(--shadow); margin-bottom: 16px; }
+.topbar h1 { color: #fff; margin: 0; font-size: 1.9rem; }
+.topbar .sub { color: var(--gold-soft); margin: 4px 0 0; }
 .lang { display: flex; gap: 6px; }
 .lang button { background: transparent; color: #dbe6f5; border: 1.5px solid rgba(255,255,255,.45); }
 .lang button.on { background: var(--gold); border-color: var(--gold); color: var(--navy); font-weight: 700; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; margin: 14px 0; box-shadow: var(--shadow); }
-.card h2 { margin-top: 0; }
-.office { border-top: 2px solid var(--line); padding: 16px 0 6px; margin-top: 16px; }
-.office h4 { margin: 0 0 6px; font-size: 1.08rem; }
+.stagehead { text-align: center; }
+.kicker { color: var(--muted); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; font-size: .85rem; }
+.deptname { font-size: 2.6rem; margin: 6px 0; }
+.steps { list-style: none; display: flex; justify-content: center; gap: 8px; padding: 0; flex-wrap: wrap; }
+.steps li { padding: 6px 14px; border-radius: 999px; background: #e7edf6; color: var(--navy-3); font-weight: 600; }
+.steps li.cur { background: var(--navy); color: #fff; box-shadow: inset 0 -3px 0 var(--gold); }
+.grid { display: grid; grid-template-columns: 1fr 340px; gap: 14px; align-items: start; }
+@media (max-width: 820px) { .grid { grid-template-columns: 1fr; } .deptname { font-size: 2rem; } }
+.qrpanel { text-align: center; }
+.qrpanel img { max-width: 100%; height: auto; border: 6px solid #fff; border-radius: 12px; box-shadow: var(--shadow); }
+.bigcode { font-size: 2.4rem; font-weight: 800; letter-spacing: .3em; text-indent: .3em; color: var(--navy); margin: 6px 0; }
 label { display: block; margin: 10px 0; font-weight: 600; color: var(--navy); }
-label.inline { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: var(--ink); }
 input, select { margin-left: 8px; padding: 10px 12px; border-radius: 10px; border: 1.5px solid var(--line); background: #fbfcfe; color: var(--ink); font: inherit; font-weight: 400; min-height: 44px; }
-input[type='checkbox'] { min-height: 0; width: 20px; height: 20px; accent-color: var(--navy); margin: 0; }
-input:focus, select:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
 button { padding: 10px 18px; border-radius: 999px; border: 1.5px solid var(--navy-3); background: #fff; color: var(--navy); margin: 4px; cursor: pointer; font: inherit; font-weight: 600; min-height: 44px; }
-button:active { transform: scale(.98); }
 button.primary { background: var(--navy); color: #fff; border-color: var(--navy); }
-button.primary:hover { background: var(--navy-3); }
-button.on { background: var(--navy); color: #fff; }
-.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
-.tabs button { background: #e7edf6; border-color: transparent; color: var(--navy-3); }
-.tabs button.on { background: var(--navy); color: #fff; box-shadow: inset 0 -3px 0 var(--gold); }
+button.big { font-size: 1.1rem; padding: 14px 26px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
 .badge { display: inline-block; padding: 3px 12px; border-radius: 999px; background: #e7edf6; color: var(--navy-3); font-weight: 600; font-size: .9rem; margin-right: 6px; }
 .badge.open { background: #fdf3d7; color: #7a5d00; border: 1px solid var(--gold); }
-.badge.warn { background: #fde8e8; color: #8a1f1f; border: 1px solid #e5a3a3; }
-.stages { list-style: none; padding: 0; counter-reset: step; }
-.stages li { padding: 8px 0 8px 42px; position: relative; color: var(--muted); }
-.stages li::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 4px; width: 30px; height: 30px; border-radius: 50%; background: #e7edf6; color: var(--navy-3); font-weight: 700; display: grid; place-items: center; font-size: .9rem; }
-.stages li.cur { font-weight: 700; color: var(--navy); }
-.stages li.cur::before { background: var(--navy); color: #fff; box-shadow: 0 0 0 3px var(--gold-soft); }
-.stages li.done { color: var(--muted); }
-.stages li.done::before { background: var(--gold); color: var(--navy); content: '✓'; }
+.candlist, .deptlist { list-style: none; padding: 0; }
+.candlist li, .deptlist li { display: flex; align-items: center; gap: 12px; padding: 8px 0; font-size: 1.15rem; border-bottom: 1px solid var(--line); }
+.bignum { display: inline-grid; place-items: center; min-width: 44px; height: 44px; padding: 0 8px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: 1.25rem; }
+.suggest { background: #fdf8e7; border: 1px solid var(--gold); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 14px; }
+.suggest ul { list-style: none; padding: 0; } .suggest li { padding: 4px 0; font-size: 1.05rem; }
+.actions { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
+.bigcount { font-size: 1.6rem; font-weight: 800; color: var(--navy); }
+.resultrow { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
+.barwrap { flex: 1; position: relative; background: #eef3fa; border-radius: 10px; height: 44px; overflow: hidden; }
+.bar { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--navy-3), var(--navy)); opacity: .9; }
+.rname { position: relative; line-height: 44px; padding-left: 12px; font-weight: 600; color: var(--navy); mix-blend-mode: normal; }
+.resultrow:nth-child(1) .bar { background: var(--gold); }
 .sub { opacity: .8; }
-.ok { background: #fdf8e7; border: 1px solid var(--gold); border-radius: var(--radius); padding: 14px; }
-fieldset { border: 1.5px solid var(--line); border-radius: var(--radius); margin: 12px 0; padding: 12px 16px; background: #fbfcfe; }
-legend { font-weight: 700; color: var(--navy); padding: 0 6px; }
-fieldset label { font-weight: 500; color: var(--ink); background: #fff; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px; min-height: 52px; display: flex; align-items: center; gap: 10px; }
-fieldset label:has(input:checked) { border-color: var(--gold); background: #fdf8e7; box-shadow: inset 0 0 0 1px var(--gold); }
-fieldset input[type='radio'] { width: 22px; height: 22px; accent-color: var(--navy); margin: 0; min-height: 0; }
-.qrbox { text-align: center; border: 2px dashed var(--gold); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; background: linear-gradient(180deg, #fffdf4, #fff); }
-.qrbox img { border: 6px solid #fff; border-radius: 12px; box-shadow: var(--shadow); max-width: 100%; height: auto; }
-.num { display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 50%; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: .9rem; vertical-align: middle; }
-.bignum { display: inline-grid; place-items: center; min-width: 40px; height: 40px; padding: 0 8px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: 1.15rem; }
-.bypick { background: #eef3fa !important; border-style: dashed !important; }
-.bigcode { font-size: 2.6rem; font-weight: 800; letter-spacing: .35em; color: var(--navy); margin: 8px 0 0; text-indent: .35em; }
-@media (max-width: 560px) { .topbar h1 { font-size: 1.5rem; } .num { display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 50%; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: .9rem; vertical-align: middle; }
-.bignum { display: inline-grid; place-items: center; min-width: 40px; height: 40px; padding: 0 8px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: 1.15rem; }
-.bypick { background: #eef3fa !important; border-style: dashed !important; }
-.bigcode { font-size: 2rem; } }
+.foot { text-align: center; color: var(--muted); font-size: .9rem; }
+.office { border-top: 2px solid var(--line); padding: 12px 0 4px; }
 </style>
