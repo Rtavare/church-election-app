@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { getSession, isLiveBackend, submitBallot, submitSuggestion, votedKey, type VoteSession } from '../services/voteBackend'
+import { getSession, isLiveBackend, normalizeName, submitBallot, submitSuggestion, votedKey, type VoteSession } from '../services/voteBackend'
 
 // Kahoot-style voter page: follows the host's screen.
 // names phase → submit a name · voting phase → tap a NUMBER · results → watch the big screen.
@@ -9,6 +9,8 @@ const session = ref<VoteSession | null>(null)
 const missing = ref(false)
 const nameDraft = ref('')
 const nameSent = ref(false)
+const nameMsg = ref('')
+const suggestionsOn = computed(() => session.value?.ballot.allowSuggestions !== false)
 const picked = ref<string | null>(null)
 const done = ref(false)
 let poll: number | undefined
@@ -29,10 +31,17 @@ onUnmounted(() => { if (poll) clearInterval(poll) })
 
 async function sendName() {
   const n = nameDraft.value.trim()
-  if (!n) return
-  await submitSuggestion(props.code, n)
-  nameDraft.value = ''
-  nameSent.value = true
+  if (!n || !dept.value) return
+  nameMsg.value = ''
+  const nn = normalizeName(n)
+  const alreadyListed = dept.value.candidates.some(c => normalizeName(c.name) === nn)
+  const alreadySent = (dept.value.suggestions || []).some(sg => normalizeName(sg) === nn)
+  if (alreadyListed) { nameMsg.value = es.value ? 'Ese nombre ya está en la lista.' : 'That name is already on the list.'; return }
+  if (alreadySent) { nameMsg.value = es.value ? 'Ese nombre ya fue enviado y espera aprobación.' : 'That name was already submitted and is waiting for approval.'; return }
+  const res = await submitSuggestion(props.code, n)
+  if (res === 'added') { nameDraft.value = ''; nameSent.value = true; nameMsg.value = '' }
+  else if (res === 'duplicate') nameMsg.value = es.value ? 'Ese nombre ya está en la lista o ya fue enviado.' : 'That name is already on the list or was already submitted.'
+  else if (res === 'off') nameMsg.value = es.value ? 'El presidente desactivó el envío de nombres.' : 'The president has turned name submissions off.'
   await refresh()
 }
 async function vote(candidateId: string) {
@@ -60,9 +69,13 @@ async function vote(candidateId: string) {
       <template v-if="phase === 'names'">
         <h2>{{ es ? 'Enviar un nombre' : 'Submit a name' }}</h2>
         <p class="sub">{{ es ? 'El pastor o la secretaria lo agregará a la lista con un número.' : 'The pastor or secretary will add it to the list with a number.' }}</p>
-        <p v-if="nameSent" class="ok">{{ es ? 'Nombre enviado. Puedes enviar otro.' : 'Name sent. You can send another.' }}</p>
-        <input v-model="nameDraft" :placeholder="es ? 'Nombre del candidato' : 'Candidate name'" @keyup.enter="sendName" />
-        <button class="primary" @click="sendName">{{ es ? 'Enviar' : 'Submit' }}</button>
+        <template v-if="suggestionsOn">
+          <p v-if="nameSent && !nameMsg" class="ok">{{ es ? 'Nombre enviado. Puedes enviar otro.' : 'Name sent. You can send another.' }}</p>
+          <input v-model="nameDraft" :placeholder="es ? 'Nombre del candidato' : 'Candidate name'" @keyup.enter="sendName" />
+          <button class="primary" @click="sendName">{{ es ? 'Enviar' : 'Submit' }}</button>
+          <p v-if="nameMsg" class="dupmsg">{{ nameMsg }}</p>
+        </template>
+        <p v-else class="ok">{{ es ? 'El presidente desactivó el envío de nombres. Solo el presidente o la secretaria agregan nombres a la lista.' : 'The president has turned name submissions off. Only the president or the secretary adds names to the list.' }}</p>
         <h3>{{ es ? 'Lista hasta ahora' : 'List so far' }}</h3>
         <ol class="list">
           <li v-for="(c, i) in dept.candidates" :key="c.id"><span class="bignum">{{ i + 1 }}</span> {{ c.name }}</li>
@@ -111,6 +124,7 @@ button.primary { background: var(--navy); color: #fff; border: 1.5px solid var(-
 .biglist li { font-size: 1.3rem; padding: 12px 0; }
 .cname { color: #16233a; }
 .bignum { display: inline-grid; place-items: center; min-width: 40px; height: 40px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; }
+.dupmsg { color: #8a1f1f; font-weight: 700; margin-top: 10px; }
 .sub { opacity: .8; }
 .ok { background: #fdf8e7; border: 1px solid var(--gold); padding: 14px; border-radius: var(--radius); font-weight: 600; }
 </style>
