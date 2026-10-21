@@ -2,7 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import { DEPARTMENTS } from './data/departments'
-import { createSession, deleteSession, fetchBallots, moveBallots, getSession, isLiveBackend, joinUrl, newSessionCode, updateSession, type RemoteBallot, type SimpleDept, type VoteSession } from './services/voteBackend'
+import { createSession, deleteSession, fetchBallots, moveBallots, normalizeName, getSession, isLiveBackend, joinUrl, newSessionCode, updateSession, type RemoteBallot, type SimpleDept, type VoteSession } from './services/voteBackend'
 import type { Lang } from './types'
 
 // ——— Kahoot-style simple flow ———
@@ -60,7 +60,7 @@ async function startSession() {
   const s: VoteSession = {
     code, title: title.value.trim() || L('Church Election', 'Elección de la Iglesia'), church: church.value.trim(),
     lang: lang.value, open: true, createdAt: new Date().toISOString(),
-    ballot: { departments: setupDepts.map(d => ({ id: crypto.randomUUID(), name: d.name, candidates: [], suggestions: [] })), current: 0, phase: 'names' },
+    ballot: { departments: setupDepts.map(d => ({ id: crypto.randomUUID(), name: d.name, candidates: [], suggestions: [] })), current: 0, phase: 'names', allowSuggestions: true },
   }
   await createSession(s)
   session.value = s
@@ -84,13 +84,21 @@ function startPolling() { if (poll) clearInterval(poll); poll = window.setInterv
 onUnmounted(() => { if (poll) clearInterval(poll) })
 
 // names stage
+const nameError = ref('')
 async function addName(name: string) {
   const n = name.trim()
   if (!session.value || !dept.value || !n) return
+  if (dept.value.candidates.some(c => normalizeName(c.name) === normalizeName(n))) {
+    nameError.value = L(`"${n}" is already on the list for this department.`, `"${n}" ya está en la lista de este departamento.`)
+    return
+  }
+  nameError.value = ''
   dept.value.candidates.push({ id: crypto.randomUUID(), name: n })
   await sync()
 }
-async function addDraftName() { await addName(nameDraft.value); nameDraft.value = '' }
+async function addDraftName() { const v = nameDraft.value; await addName(v); if (!nameError.value) nameDraft.value = '' }
+const allowSuggestions = computed(() => session.value?.ballot.allowSuggestions !== false)
+async function toggleSuggestions(on: boolean) { await sync({ allowSuggestions: on }) }
 async function approveSuggestion(i: number) {
   if (!dept.value) return
   const [name] = dept.value.suggestions.splice(i, 1)
@@ -240,7 +248,12 @@ watch(lang, () => persist())
           <!-- NAMES -->
           <template v-if="phase === 'names'">
             <h3>{{ L('Names for', 'Nombres para') }} {{ dept.name }}</h3>
-            <p class="sub">{{ L('Members submit names from their phones. The pastor or secretary adds each name here — it gets the next number.', 'Los miembros envían nombres desde sus teléfonos. El pastor o la secretaria agrega cada nombre aquí — recibe el siguiente número.') }}</p>
+            <label class="switchrow">
+              <input type="checkbox" :checked="allowSuggestions" @change="toggleSuggestions(($event.target as HTMLInputElement).checked)" />
+              {{ L('Let the committee submit names from their phones', 'Permitir que el comité envíe nombres desde sus teléfonos') }}
+            </label>
+            <p class="sub" v-if="allowSuggestions">{{ L('Members submit names from their phones. The pastor or secretary adds each name here — it gets the next number. Duplicate names are rejected automatically.', 'Los miembros envían nombres desde sus teléfonos. El pastor o la secretaria agrega cada nombre aquí — recibe el siguiente número. Los nombres duplicados se rechazan automáticamente.') }}</p>
+            <p class="sub" v-else>{{ L('Submissions are OFF. Only the president or secretary adds names here — phones can watch the list but cannot send names.', 'Los envíos están DESACTIVADOS. Solo el presidente o la secretaria agrega nombres aquí — los teléfonos pueden ver la lista pero no enviar nombres.') }}</p>
             <div v-if="dept.suggestions.length" class="suggest">
               <h4>{{ L('Submitted from phones — tap + to add', 'Enviados desde teléfonos — toque + para agregar') }}</h4>
               <ul><li v-for="(sg, i) in dept.suggestions" :key="i">{{ sg }}
@@ -254,6 +267,7 @@ watch(lang, () => persist())
             <p v-if="!dept.candidates.length" class="sub">{{ L('No names yet.', 'Aún no hay nombres.') }}</p>
             <input v-model="nameDraft" :placeholder="L('Type a name and press Add', 'Escriba un nombre y presione Agregar')" @keyup.enter="addDraftName" />
             <button class="primary" @click="addDraftName">{{ L('Add name', 'Agregar nombre') }}</button>
+            <p v-if="nameError" class="error">{{ nameError }}</p>
             <div class="actions">
               <button class="primary big" :disabled="dept.candidates.length < 2" @click="startVoting">{{ L('Start voting', 'Iniciar votación') }} →</button>
             </div>
@@ -365,6 +379,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .rname { position: relative; line-height: 44px; padding-left: 12px; font-weight: 600; color: var(--navy); mix-blend-mode: normal; }
 .resultrow:nth-child(1) .bar { background: var(--gold); }
 .sub { opacity: .8; }
+.switchrow { display: flex; align-items: center; gap: 10px; background: #eef3fa; border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 14px; font-size: 1rem; }
+.switchrow input { width: 22px; height: 22px; margin: 0; min-height: 0; accent-color: var(--navy); }
 .pininput { font-size: 1.3rem; font-weight: 800; letter-spacing: .35em; text-align: center; max-width: 220px; }
 .error { color: #8a1f1f; font-weight: 700; }
 .changepin { border-top: 2px solid var(--line); margin-top: 16px; padding-top: 12px; }
