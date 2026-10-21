@@ -31,6 +31,17 @@ npx cap open android   # Android Studio — Android platform is included
 # iOS: on a Mac, run: npx cap add ios && npx cap sync && npx cap open ios
 ```
 
+## QR voting (voters on their own phones)
+1. Chair sets up the election and offices, then in the Ballot tab taps **Open QR voting**.
+2. The app creates a voting session and shows a **QR code + 6-digit join code**.
+3. Voters scan the QR (or enter the code) — the link opens `#/vote/<code>` on their phone, no install, no account, no name.
+4. Each device can vote once per session; ballots contain choices only — no voter field.
+5. The chair's tally updates live (polls every 3s) and merges QR ballots with any pass-the-device ballots.
+
+**Modes**
+- *Live mode* — set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_PUBLIC_BASE_URL` (see `.env.example`) after running `supabase/schema.sql` in a Supabase project, and host the web build at the public URL in the QR. This is the real multi-phone setup.
+- *Local demo mode* (no env set) — sessions sync across tabs/windows of the same browser via localStorage + BroadcastChannel, so you can test chair + voter side by side on one device. It is **not** a multi-phone backend.
+
 ## Notes
 - v1 is a single-device, chair-run app. A shared multi-phone version
   (each committee member voting live from their own device) is phase 2
