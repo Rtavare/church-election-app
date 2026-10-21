@@ -1,56 +1,85 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { getSession, submitBallot, votedKey, type VoteSession } from '../services/voteBackend'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { getSession, submitBallot, submitSuggestion, votedKey, type VoteSession } from '../services/voteBackend'
 
+// Kahoot-style voter page: follows the host's screen.
+// names phase → submit a name · voting phase → tap a NUMBER · results → watch the big screen.
 const props = defineProps<{ code: string }>()
 const session = ref<VoteSession | null>(null)
 const missing = ref(false)
+const nameDraft = ref('')
+const nameSent = ref(false)
+const picked = ref<string | null>(null)
 const done = ref(false)
-const already = ref(localStorage.getItem(votedKey(props.code)) === '1')
-const choices = reactive<Record<string, string | null>>({})
+let poll: number | undefined
 
-onMounted(async () => {
-  try { session.value = await getSession(props.code) } catch { session.value = null }
+const dept = computed(() => session.value?.ballot.departments[session.value.ballot.current] || null)
+const phase = computed(() => session.value?.ballot.phase || 'names')
+const es = computed(() => session.value?.lang === 'es')
+const votedFlag = () => dept.value ? localStorage.getItem(votedKey(`${props.code}-${dept.value.id}`)) === '1' : false
+
+async function refresh() {
+  try { session.value = await getSession(props.code) } catch { /* keep last */ }
   if (!session.value) missing.value = true
-})
+  if (votedFlag()) done.value = true
+}
+onMounted(() => { refresh(); poll = window.setInterval(refresh, 2500) })
+onUnmounted(() => { if (poll) clearInterval(poll) })
 
-async function submit() {
-  if (!session.value || already.value) return
-  await submitBallot(props.code, { ...choices })
-  localStorage.setItem(votedKey(props.code), '1')
-  already.value = true
+async function sendName() {
+  const n = nameDraft.value.trim()
+  if (!n) return
+  await submitSuggestion(props.code, n)
+  nameDraft.value = ''
+  nameSent.value = true
+  await refresh()
+}
+async function vote(candidateId: string) {
+  if (!dept.value || done.value) return
+  picked.value = candidateId
+  await submitBallot(props.code, { [dept.value.id]: candidateId })
+  localStorage.setItem(votedKey(`${props.code}-${dept.value.id}`), '1')
   done.value = true
 }
-const es = () => session.value?.lang === 'es'
 </script>
 
 <template>
   <main class="wrap">
-    <h1>{{ es() ? 'Votación' : 'Ballot' }} · {{ code }}</h1>
-    <p v-if="missing">{{ es() ? 'Sesión no encontrada. Verifica el código con el presidente.' : 'Session not found. Check the code with the chair.' }}</p>
-    <template v-else-if="session">
-      <h2>{{ session.title }}</h2>
-      <p class="sub">{{ session.church }}</p>
-      <p v-if="done" class="ok">{{ es() ? 'Voto recibido. Gracias.' : 'Ballot received. Thank you.' }}</p>
-      <p v-else-if="already">{{ es() ? 'Este dispositivo ya votó en esta sesión.' : 'This device has already voted in this session.' }}</p>
-      <p v-else-if="!session.open">{{ es() ? 'La votación está cerrada.' : 'Voting is closed.' }}</p>
+    <h1>{{ session?.title || (es ? 'Elección de la Iglesia' : 'Church Election') }}</h1>
+    <p v-if="missing">{{ es ? 'Sesión no encontrada. Verifica el código con el pastor.' : 'Session not found. Check the code with the pastor.' }}</p>
+    <template v-else-if="session && dept">
+      <p class="dept">{{ dept.name }}</p>
+
+      <!-- NAMES -->
+      <template v-if="phase === 'names'">
+        <h2>{{ es ? 'Enviar un nombre' : 'Submit a name' }}</h2>
+        <p class="sub">{{ es ? 'El pastor o la secretaria lo agregará a la lista con un número.' : 'The pastor or secretary will add it to the list with a number.' }}</p>
+        <p v-if="nameSent" class="ok">{{ es ? 'Nombre enviado. Puedes enviar otro.' : 'Name sent. You can send another.' }}</p>
+        <input v-model="nameDraft" :placeholder="es ? 'Nombre del candidato' : 'Candidate name'" @keyup.enter="sendName" />
+        <button class="primary" @click="sendName">{{ es ? 'Enviar' : 'Submit' }}</button>
+        <h3>{{ es ? 'Lista hasta ahora' : 'List so far' }}</h3>
+        <ol class="list">
+          <li v-for="(c, i) in dept.candidates" :key="c.id"><span class="bignum">{{ i + 1 }}</span> {{ c.name }}</li>
+        </ol>
+        <p v-if="!dept.candidates.length" class="sub">{{ es ? 'Aún no hay nombres.' : 'No names yet.' }}</p>
+      </template>
+
+      <!-- VOTING: tap a number -->
+      <template v-else-if="phase === 'voting'">
+        <h2>{{ es ? 'Toca un número para votar' : 'Tap a number to vote' }}</h2>
+        <p v-if="done" class="ok">{{ es ? 'Voto recibido. Gracias.' : 'Vote received. Thank you.' }}</p>
+        <div v-else class="grid">
+          <button v-for="(c, i) in dept.candidates" :key="c.id" class="tile" :class="{ picked: picked === c.id }" @click="vote(c.id)">
+            <span class="n">{{ i + 1 }}</span>
+            <span class="nm">{{ c.name }}</span>
+          </button>
+        </div>
+        <p class="sub">{{ es ? 'Anónimo — tu nombre nunca se registra.' : 'Anonymous — your name is never recorded.' }}</p>
+      </template>
+
+      <!-- RESULTS / DONE -->
       <template v-else>
-        <p>{{ es() ? 'Voto anónimo — su nombre nunca se registra.' : 'Anonymous ballot — your name is never recorded.' }}</p>
-        <fieldset v-for="o in session.ballot.offices" :key="o.id">
-          <legend>{{ o.department }} — {{ o.role }}</legend>
-          <label class="bypick">{{ es() ? 'Seleccionar por número' : 'Select by number' }}
-            <select v-model="choices[o.id]">
-              <option :value="undefined">—</option>
-              <option v-for="(n, ni) in o.nominees" :key="n.id" :value="n.id">{{ n.number ?? ni + 1 }} · {{ n.name }}</option>
-              <option :value="null">{{ es() ? 'Abstenerse' : 'Abstain' }}</option>
-            </select>
-          </label>
-          <label v-for="(n, ni) in o.nominees" :key="n.id">
-            <input type="radio" :name="o.id" :value="n.id" v-model="choices[o.id]" /> <span class="bignum">{{ n.number ?? ni + 1 }}</span> {{ n.name }}
-          </label>
-          <label><input type="radio" :name="o.id" :value="null" v-model="choices[o.id]" /> {{ es() ? 'Abstenerse' : 'Abstain' }}</label>
-        </fieldset>
-        <button class="primary" @click="submit">{{ es() ? 'Emitir voto' : 'Cast ballot' }}</button>
+        <p class="ok">{{ es ? 'Votación cerrada — mira los resultados en la pantalla principal.' : 'Voting closed — watch the results on the main screen.' }}</p>
       </template>
     </template>
     <p v-else>…</p>
@@ -59,26 +88,18 @@ const es = () => session.value?.lang === 'es'
 
 <style scoped>
 .wrap { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
-h1 {
-  background: linear-gradient(135deg, var(--navy), var(--navy-3)); color: #fff;
-  border-bottom: 4px solid var(--gold); border-radius: var(--radius);
-  padding: 18px 20px; box-shadow: var(--shadow); font-size: 1.5rem; margin: 0 0 14px;
-}
-label {
-  display: flex; align-items: center; gap: 10px; margin: 10px 0; min-height: 52px;
-  background: #fff; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px; font-weight: 500;
-}
-label:has(input:checked) { border-color: var(--gold); background: #fdf8e7; box-shadow: inset 0 0 0 1px var(--gold); }
-input[type='radio'] { width: 22px; height: 22px; accent-color: var(--navy); }
-fieldset { border: 1.5px solid var(--line); border-radius: var(--radius); margin: 12px 0; padding: 12px 16px; background: #fbfcfe; }
-legend { font-weight: 700; color: var(--navy); padding: 0 6px; }
-button.primary {
-  background: var(--navy); color: #fff; border: 1.5px solid var(--navy); padding: 12px 22px;
-  border-radius: 999px; cursor: pointer; font: inherit; font-weight: 700; min-height: 48px; width: 100%;
-}
-.bignum { display: inline-grid; place-items: center; min-width: 40px; height: 40px; padding: 0 8px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; font-size: 1.15rem; }
-.bypick { background: #eef3fa; border-style: dashed; }
-select { margin-left: 8px; padding: 10px 12px; border-radius: 10px; border: 1.5px solid var(--line); background: #fff; font: inherit; min-height: 44px; }
+h1 { background: linear-gradient(135deg, var(--navy), var(--navy-3)); color: #fff; border-bottom: 4px solid var(--gold); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); font-size: 1.4rem; margin: 0 0 12px; }
+.dept { font-size: 1.8rem; font-weight: 800; color: var(--navy); text-align: center; margin: 10px 0; }
+input { width: 100%; padding: 12px; border-radius: 10px; border: 1.5px solid var(--line); font: inherit; margin: 8px 0; background: #fff; }
+button.primary { background: var(--navy); color: #fff; border: 1.5px solid var(--navy); padding: 12px 22px; border-radius: 999px; cursor: pointer; font: inherit; font-weight: 700; min-height: 48px; width: 100%; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; }
+.tile { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 10px; border-radius: 16px; border: 2px solid var(--line); background: #fff; cursor: pointer; font: inherit; box-shadow: var(--shadow); }
+.tile .n { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--navy); color: var(--gold-soft); font-size: 1.7rem; font-weight: 800; }
+.tile .nm { font-weight: 600; color: var(--navy); text-align: center; }
+.tile:active, .tile.picked { border-color: var(--gold); background: #fdf8e7; }
+.list { list-style: none; padding: 0; }
+.list li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 1.1rem; }
+.bignum { display: inline-grid; place-items: center; min-width: 40px; height: 40px; border-radius: 12px; background: var(--navy); color: var(--gold-soft); font-weight: 800; }
 .sub { opacity: .8; }
 .ok { background: #fdf8e7; border: 1px solid var(--gold); padding: 14px; border-radius: var(--radius); font-weight: 600; }
 </style>
