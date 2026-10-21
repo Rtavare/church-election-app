@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { getSession, submitBallot, submitSuggestion, votedKey, type VoteSession } from '../services/voteBackend'
+import { getSession, isLiveBackend, submitBallot, submitSuggestion, votedKey, type VoteSession } from '../services/voteBackend'
 
 // Kahoot-style voter page: follows the host's screen.
 // names phase → submit a name · voting phase → tap a NUMBER · results → watch the big screen.
@@ -47,7 +47,11 @@ async function vote(candidateId: string) {
 <template>
   <main class="wrap">
     <h1>{{ session?.title || (es ? 'Elección de la Iglesia' : 'Church Election') }}</h1>
-    <p v-if="missing">{{ es ? 'Sesión no encontrada. Verifica el código con el pastor.' : 'Session not found. Check the code with the pastor.' }}</p>
+    <div v-if="missing" class="ok">
+      <p><strong>{{ es ? 'Sesión no encontrada.' : 'Session not found.' }}</strong></p>
+      <p v-if="!isLiveBackend">{{ es ? 'La app está en modo de demostración local: la sesión solo existe en el dispositivo del anfitrión, así que otro teléfono no puede verla. El modo en vivo (varios teléfonos) se activa cuando se conecte la base de datos compartida.' : 'The app is in local demo mode: the session only exists on the host device, so another phone cannot see it. Live multi-phone mode turns on once the shared database is connected.' }}</p>
+      <p v-else>{{ es ? 'Verifica el código con el pastor — pudo haber cambiado el PIN.' : 'Check the code with the pastor — the PIN may have changed.' }}</p>
+    </div>
     <p v-else-if="closed" class="ok">{{ es ? 'Esta sesión se cerró o el PIN cambió. Pide al pastor el código nuevo.' : 'This session was closed or the PIN changed. Ask the pastor for the new code.' }}</p>
     <template v-else-if="session && dept">
       <p class="dept">{{ dept.name }}</p>
