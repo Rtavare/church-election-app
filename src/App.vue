@@ -128,7 +128,7 @@ async function copyReport() {
 
 <template>
   <main class="wrap">
-    <header>
+    <header class="topbar">
       <div><h1>{{ s.appTitle }}</h1><p class="sub">{{ s.appSub }}</p></div>
       <div class="lang" role="group" aria-label="Language">
         <button :class="{ on: state.lang === 'en' }" @click="setLang('en')">EN · English</button>
@@ -242,19 +242,69 @@ async function copyReport() {
 </template>
 
 <style scoped>
-.wrap { max-width: 760px; margin: 0 auto; padding: 16px; font-family: system-ui, sans-serif; }
-header, .lang { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; }
-.office { border-top: 1px solid #eee; padding: 12px 0; }
-label { display: block; margin: 8px 0; }
-input, select { margin-left: 8px; padding: 8px; border-radius: 8px; border: 1px solid #bbb; }
-button { padding: 8px 14px; border-radius: 999px; border: 1px solid #888; background: #fff; margin: 4px; cursor: pointer; }
-button.primary { background: #14532d; color: #fff; border-color: #14532d; }
-button.on { background: #222; color: #fff; }
-.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
-.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #eee; }
-.badge.open { background: #dcfce7; }
-.stages li.cur { font-weight: 700; } .stages li.done { opacity: .55; text-decoration: line-through; }
-.sub { opacity: .75; } .ok { background: #f0fdf4; }
-fieldset { border: 1px solid #ddd; border-radius: 12px; margin: 10px 0; }
+/* ——— Modern navy + gold ——— */
+.wrap { max-width: 820px; margin: 0 auto; padding: 20px 16px 48px; }
+.topbar {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-3) 100%);
+  border-bottom: 4px solid var(--gold);
+  border-radius: var(--radius); padding: 22px 24px; box-shadow: var(--shadow); margin-bottom: 16px;
+}
+.topbar h1 { color: #fff; margin: 0; font-size: 1.9rem; letter-spacing: .2px; }
+.topbar .sub { color: var(--gold-soft); margin: 4px 0 0; font-size: .95rem; }
+.lang { display: flex; gap: 6px; }
+.lang button { background: transparent; color: #dbe6f5; border: 1.5px solid rgba(255,255,255,.45); }
+.lang button.on { background: var(--gold); border-color: var(--gold); color: var(--navy); font-weight: 700; }
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 20px 22px; margin: 14px 0; box-shadow: var(--shadow);
+}
+.card h2 { margin-top: 0; }
+.office { border-top: 2px solid var(--line); padding: 16px 0 6px; margin-top: 16px; }
+.office h4 { margin: 0 0 6px; font-size: 1.08rem; }
+label { display: block; margin: 10px 0; font-weight: 600; color: var(--navy); }
+input, select {
+  margin-left: 8px; padding: 10px 12px; border-radius: 10px; border: 1.5px solid var(--line);
+  background: #fbfcfe; color: var(--ink); font: inherit; font-weight: 400; min-height: 44px;
+}
+input:focus, select:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
+button {
+  padding: 10px 18px; border-radius: 999px; border: 1.5px solid var(--navy-3); background: #fff;
+  color: var(--navy); margin: 4px; cursor: pointer; font: inherit; font-weight: 600; min-height: 44px;
+  transition: transform .05s ease, background .15s ease;
+}
+button:active { transform: scale(.98); }
+button.primary { background: var(--navy); color: #fff; border-color: var(--navy); }
+button.primary:hover { background: var(--navy-3); }
+button.on { background: var(--navy); color: #fff; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.tabs button { background: #e7edf6; border-color: transparent; color: var(--navy-3); }
+.tabs button.on { background: var(--navy); color: #fff; box-shadow: inset 0 -3px 0 var(--gold); }
+.badge { display: inline-block; padding: 3px 12px; border-radius: 999px; background: #e7edf6; color: var(--navy-3); font-weight: 600; font-size: .9rem; }
+.badge.open { background: #fdf3d7; color: #7a5d00; border: 1px solid var(--gold); }
+.stages { list-style: none; padding: 0; counter-reset: step; }
+.stages li { padding: 8px 0 8px 42px; position: relative; color: var(--muted); }
+.stages li::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; left: 0; top: 4px; width: 30px; height: 30px; border-radius: 50%;
+  background: #e7edf6; color: var(--navy-3); font-weight: 700; display: grid; place-items: center; font-size: .9rem;
+}
+.stages li.cur { font-weight: 700; color: var(--navy); }
+.stages li.cur::before { background: var(--navy); color: #fff; box-shadow: 0 0 0 3px var(--gold-soft); }
+.stages li.done { color: var(--muted); }
+.stages li.done::before { background: var(--gold); color: var(--navy); content: '✓'; }
+.sub { opacity: .8; }
+.ok { background: #fdf8e7; border: 1px solid var(--gold); border-radius: var(--radius); padding: 14px; }
+fieldset { border: 1.5px solid var(--line); border-radius: var(--radius); margin: 12px 0; padding: 12px 16px; background: #fbfcfe; }
+legend { font-weight: 700; color: var(--navy); padding: 0 6px; }
+fieldset label {
+  font-weight: 500; color: var(--ink); background: #fff; border: 1.5px solid var(--line);
+  border-radius: 12px; padding: 12px 14px; min-height: 52px; display: flex; align-items: center; gap: 10px;
+}
+fieldset label:has(input:checked) { border-color: var(--gold); background: #fdf8e7; box-shadow: inset 0 0 0 1px var(--gold); }
+fieldset input[type='radio'] { width: 22px; height: 22px; accent-color: var(--navy); margin: 0; min-height: 0; }
+.qrbox { text-align: center; border: 2px dashed var(--gold); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; background: linear-gradient(180deg, #fffdf4, #fff); }
+.qrbox img { border: 6px solid #fff; border-radius: 12px; box-shadow: var(--shadow); max-width: 100%; height: auto; }
+.bigcode { font-size: 2.6rem; font-weight: 800; letter-spacing: .35em; color: var(--navy); margin: 8px 0 0; text-indent: .35em; }
+@media (max-width: 560px) { .topbar h1 { font-size: 1.5rem; } .bigcode { font-size: 2rem; } }
 </style>
