@@ -1,3 +1,17 @@
+# Supabase Setup — COMPLETE ✅
+
+Connected on 2026-10-21. The app runs in **live mode**: sessions, name submissions,
+ballots and tallies sync across devices through this project.
+
+- **Project:** church-election-app (ref zhkpugpkjtqxirwosdfu), East US (North Virginia), Free plan
+- **Project URL:** https://zhkpugpkjtqxirwosdfu.supabase.co
+- **Tables:** vote_sessions + vote_ballots (schema.sql applied, RLS policies incl. PIN-rotation)
+- **Keys:** the anon public key lives in the local `.env` (gitignored) and is baked into
+  the production build at deploy time. Never add the `service_role` key anywhere in this app.
+
+To redeploy after code changes, the build must run with `.env` present so Vite bakes the
+live configuration in; without it the app falls back to local demo mode (same-device only).
+
 # Supabase setup — live QR voting
 
 Goal: voters on different phones can join one session and ballots tally live on the chair's screen.
