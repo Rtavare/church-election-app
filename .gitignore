@@ -3,3 +3,5 @@ dist
 android
 .idea
 *.local
+
+.env
